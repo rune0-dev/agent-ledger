@@ -62,11 +62,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/effect_ledger"]
+packages = ["effect_ledger"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/src",
+    "/effect_ledger",
     "/tests",
     "/examples",
 ]
@@ -80,11 +80,11 @@ addopts = "-v --tb=short"
 [tool.ruff]
 target-version = "py310"
 line-length = 88
-src = ["src", "tests"]
+src = ["effect_ledger", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP", "ARG", "SIM", "TCH", "PTH", "RUF"]
-ignore = ["E501", "B008", "ARG002"]
+ignore = ["E501", "B008", "ARG001", "ARG002", "TCH003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["effect_ledger"]
@@ -103,7 +103,7 @@ warn_unused_ignores = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "src"
+mypy_path = "."
 
 [[tool.mypy.overrides]]
 module = [
@@ -115,7 +115,7 @@ module = [
 ignore_missing_imports = true
 
 [tool.coverage.run]
-source = ["src/effect_ledger"]
+source = ["effect_ledger"]
 branch = true
 
 [tool.coverage.report]
@@ -125,3 +125,23 @@ exclude_lines = [
     "raise NotImplementedError",
     "@abstractmethod",
 ]
+
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov=effect_ledger --cov-report=term-missing --cov-report=xml {args:tests}"
+lint = "ruff check effect_ledger/ tests/"
+lint-fix = "ruff check effect_ledger/ tests/ --fix"
+format = "ruff format effect_ledger/ tests/"
+format-check = "ruff format --check effect_ledger/ tests/"
+typecheck = "mypy effect_ledger/"
+check = ["lint", "format-check", "typecheck", "test"]
+all = ["lint-fix", "format", "typecheck", "test-cov"]
