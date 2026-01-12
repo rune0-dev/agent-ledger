@@ -201,6 +201,7 @@ class EffectLedger(Generic[TxT]):
                 result=outcome.result,
                 tx=tx,
             )
+
             return
 
         await self._store.transition(
@@ -220,6 +221,7 @@ class EffectLedger(Generic[TxT]):
         deadline = asyncio.get_event_loop().time() + (
             opts.concurrency.wait_timeout_ms / 1000
         )
+
         interval = opts.concurrency.initial_interval_ms
 
         while asyncio.get_event_loop().time() < deadline:
@@ -235,8 +237,10 @@ class EffectLedger(Generic[TxT]):
                     effect.error.message if effect.error else None,
                 )
 
-            if is_terminal_status(effect.status) or _is_effect_stale(
-                effect, opts.stale.after_ms
+            if (
+                is_terminal_status(effect.status)
+                or effect.status == EffectStatus.READY
+                or _is_effect_stale(effect, opts.stale.after_ms)
             ):
                 return effect
 
@@ -264,8 +268,10 @@ class EffectLedger(Generic[TxT]):
         if begin_result.idempotency_status == "fresh":
             if requires_approval:
                 await self.request_approval(effect.idem_key, tx)
+
                 resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
                 return await self._execute_handler(resolved, handler, tx)
+
             return await self._execute_handler(effect, handler, tx)
 
         if begin_result.cached:
@@ -283,6 +289,23 @@ class EffectLedger(Generic[TxT]):
 
         if effect.status == EffectStatus.PROCESSING:
             if _is_effect_stale(effect, merged.stale.after_ms):
+                claimed = await self._store.claim_for_processing(
+                    effect.id,
+                    EffectStatus.PROCESSING,
+                    stale_threshold_ms=merged.stale.after_ms,
+                    tx=tx,
+                )
+
+                if not claimed:
+                    # Someone else claimed it, wait for their result
+                    resolved = await self._wait_for_terminal(
+                        effect.idem_key, merged, tx
+                    )
+
+                    return await self._handle_resolved_effect(
+                        resolved, handler, merged, tx
+                    )
+
                 return await self._execute_handler(effect, handler, tx)
 
             resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
@@ -293,6 +316,17 @@ class EffectLedger(Generic[TxT]):
             return await self._handle_resolved_effect(resolved, handler, merged, tx)
 
         if effect.status == EffectStatus.READY:
+            claimed = await self._store.claim_for_processing(
+                effect.id,
+                EffectStatus.READY,
+                tx=tx,
+            )
+
+            if not claimed:
+                # Someone else claimed it, wait for their result
+                resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
+                return await self._handle_resolved_effect(resolved, handler, merged, tx)
+
             return await self._execute_handler(effect, handler, tx)
 
         if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
@@ -340,9 +374,54 @@ class EffectLedger(Generic[TxT]):
             return effect.result
 
         if effect.status == EffectStatus.READY:
+            claimed = await self._store.claim_for_processing(
+                effect.id,
+                EffectStatus.READY,
+                tx=tx,
+            )
+            if not claimed:
+                # Someone else got it, re-fetch and handle
+                updated = await self._store.find_by_idem_key(effect.idem_key, tx)
+                if updated and is_terminal_status(updated.status):
+                    if updated.status == EffectStatus.SUCCEEDED:
+                        return updated.result
+                    if updated.status == EffectStatus.FAILED and updated.error:
+                        raise EffectFailedError(
+                            updated.idem_key,
+                            {
+                                "code": updated.error.code,
+                                "message": updated.error.message,
+                            },
+                        )
+                raise RuntimeError(
+                    f"Effect {effect.idem_key} claim failed, unexpected state"
+                )
             return await self._execute_handler(effect, handler, tx)
 
         if _is_effect_stale(effect, merged.stale.after_ms):
+            claimed = await self._store.claim_for_processing(
+                effect.id,
+                EffectStatus.PROCESSING,
+                stale_threshold_ms=merged.stale.after_ms,
+                tx=tx,
+            )
+            if not claimed:
+                # Someone else got it, re-fetch and handle
+                updated = await self._store.find_by_idem_key(effect.idem_key, tx)
+                if updated and is_terminal_status(updated.status):
+                    if updated.status == EffectStatus.SUCCEEDED:
+                        return updated.result
+                    if updated.status == EffectStatus.FAILED and updated.error:
+                        raise EffectFailedError(
+                            updated.idem_key,
+                            {
+                                "code": updated.error.code,
+                                "message": updated.error.message,
+                            },
+                        )
+                raise RuntimeError(
+                    f"Effect {effect.idem_key} claim failed, unexpected state"
+                )
             return await self._execute_handler(effect, handler, tx)
 
         raise RuntimeError(
@@ -386,6 +465,7 @@ class EffectLedger(Generic[TxT]):
                 error=error,
                 tx=tx,
             )
+
             raise
 
     async def get_effect(

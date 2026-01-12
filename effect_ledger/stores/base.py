@@ -56,3 +56,19 @@ class EffectStore(Protocol[TxT]):
         idem_key: str,
         tx: TxT | None = None,
     ) -> None: ...
+
+    async def claim_for_processing(
+        self,
+        effect_id: str,
+        from_status: EffectStatus,
+        stale_threshold_ms: int | None = None,
+        tx: TxT | None = None,
+    ) -> bool:
+        """Atomically claim an effect for processing.
+
+        For READY: claims if status is READY.
+        For stale PROCESSING: claims if status is PROCESSING AND updated_at is older than threshold.
+
+        Returns True if claimed, False if someone else got it.
+        """
+        ...

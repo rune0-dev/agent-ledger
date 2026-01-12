@@ -20,15 +20,15 @@ from effect_ledger.types import (
 )
 from effect_ledger.utils import generate_id
 
+TABLE_NAME = "effects"
+
 
 class PostgresStore:
     def __init__(
         self,
         pool: AsyncConnectionPool[AsyncConnection[DictRow]],
-        table: str = "effects",
     ) -> None:
         self._pool = pool
-        self._table = table
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncConnection[DictRow]]:
@@ -40,11 +40,13 @@ class PostgresStore:
         idem_key: str,
         tx: AsyncConnection[DictRow] | None = None,
     ) -> Effect | None:
-        query = f"SELECT * FROM {self._table} WHERE idem_key = %s LIMIT 1"
+        query = f"SELECT * FROM {TABLE_NAME} WHERE idem_key = %s LIMIT 1"
         conn = tx or self._pool
+
         async with conn.cursor() as cur:
             await cur.execute(query, (idem_key,))
             row = await cur.fetchone()
+
             if row is None:
                 return None
             return self._row_to_effect(dict(row))
@@ -54,13 +56,16 @@ class PostgresStore:
         effect_id: str,
         tx: AsyncConnection[DictRow] | None = None,
     ) -> Effect | None:
-        query = f"SELECT * FROM {self._table} WHERE id = %s LIMIT 1"
+        query = f"SELECT * FROM {TABLE_NAME} WHERE id = %s LIMIT 1"
         conn = tx or self._pool
+
         async with conn.cursor() as cur:
             await cur.execute(query, (effect_id,))
             row = await cur.fetchone()
+
             if row is None:
                 return None
+
             return self._row_to_effect(dict(row))
 
     async def upsert(
@@ -72,37 +77,37 @@ class PostgresStore:
         now = datetime.now(tz=timezone.utc)
 
         query = f"""
-            INSERT INTO {self._table}
+            INSERT INTO {TABLE_NAME}
             (id, idem_key, workflow_id, call_id, tool, status, args_canonical,
              resource_id_canonical, result, error, dedup_count, created_at, updated_at, completed_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
             ON CONFLICT (idem_key) DO UPDATE SET
               status = CASE
-                WHEN {self._table}.status IN ('succeeded', 'failed', 'canceled', 'denied')
-                THEN {self._table}.status
+                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                THEN {TABLE_NAME}.status
                 ELSE EXCLUDED.status
               END,
               result = CASE
-                WHEN {self._table}.status IN ('succeeded', 'failed', 'canceled', 'denied')
-                THEN {self._table}.result
+                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                THEN {TABLE_NAME}.result
                 ELSE EXCLUDED.result
               END,
               error = CASE
-                WHEN {self._table}.status IN ('succeeded', 'failed', 'canceled', 'denied')
-                THEN {self._table}.error
+                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                THEN {TABLE_NAME}.error
                 ELSE EXCLUDED.error
               END,
               updated_at = CASE
-                WHEN {self._table}.status IN ('succeeded', 'failed', 'canceled', 'denied')
-                THEN {self._table}.updated_at
+                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                THEN {TABLE_NAME}.updated_at
                 ELSE EXCLUDED.updated_at
               END,
               completed_at = CASE
-                WHEN {self._table}.status IN ('succeeded', 'failed', 'canceled', 'denied')
-                THEN {self._table}.completed_at
+                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                THEN {TABLE_NAME}.completed_at
                 WHEN EXCLUDED.status IN ('succeeded', 'failed', 'canceled', 'denied')
                 THEN EXCLUDED.updated_at
-                ELSE {self._table}.completed_at
+                ELSE {TABLE_NAME}.completed_at
               END
             RETURNING *, (xmax = 0) AS created
         """
@@ -134,6 +139,7 @@ class PostgresStore:
                     now if is_terminal_status(input_data.status) else None,
                 ),
             )
+
             row = await cur.fetchone()
             if row is None:
                 raise RuntimeError("Upsert returned no rows")
@@ -159,7 +165,7 @@ class PostgresStore:
         now = datetime.now(tz=timezone.utc)
 
         query = f"""
-            UPDATE {self._table}
+            UPDATE {TABLE_NAME}
             SET status = %s, result = %s, error = %s, updated_at = %s,
                 completed_at = CASE WHEN %s THEN %s ELSE completed_at END
             WHERE id = %s AND status = %s
@@ -180,6 +186,7 @@ class PostgresStore:
                     from_status.value,
                 ),
             )
+
             return bool(cur.rowcount == 1)
 
     async def increment_dedup_count(
@@ -188,13 +195,49 @@ class PostgresStore:
         tx: AsyncConnection[DictRow] | None = None,
     ) -> None:
         query = f"""
-            UPDATE {self._table}
+            UPDATE {TABLE_NAME}
             SET dedup_count = dedup_count + 1, updated_at = %s
             WHERE idem_key = %s
         """
         conn = tx or self._pool
+
         async with conn.cursor() as cur:
             await cur.execute(query, (datetime.now(tz=timezone.utc), idem_key))
+
+    async def claim_for_processing(
+        self,
+        effect_id: str,
+        from_status: EffectStatus,
+        stale_threshold_ms: int | None = None,
+        tx: AsyncConnection[DictRow] | None = None,
+    ) -> bool:
+        now = datetime.now(tz=timezone.utc)
+        conn = tx or self._pool
+
+        if from_status == EffectStatus.PROCESSING and stale_threshold_ms is not None:
+            # Stale claim: only claim if updated_at is older than threshold
+            query = f"""
+                UPDATE {TABLE_NAME}
+                SET status = 'processing', updated_at = %s
+                WHERE id = %s AND status = 'processing'
+                  AND updated_at < %s - INTERVAL '%s milliseconds'
+            """
+
+            async with conn.cursor() as cur:
+                await cur.execute(query, (now, effect_id, now, stale_threshold_ms))
+                return bool(cur.rowcount == 1)
+
+        else:
+            # READY claim: simple CAS
+            query = f"""
+                UPDATE {TABLE_NAME}
+                SET status = 'processing', updated_at = %s
+                WHERE id = %s AND status = %s
+            """
+
+            async with conn.cursor() as cur:
+                await cur.execute(query, (now, effect_id, from_status.value))
+                return bool(cur.rowcount == 1)
 
     def _row_to_effect(self, row: dict[str, Any]) -> Effect:
         error_data = row.get("error")

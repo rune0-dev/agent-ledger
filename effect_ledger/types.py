@@ -25,7 +25,6 @@ TERMINAL_STATUSES: frozenset[EffectStatus] = frozenset(
         EffectStatus.FAILED,
         EffectStatus.CANCELED,
         EffectStatus.DENIED,
-        EffectStatus.READY,
     }
 )
 

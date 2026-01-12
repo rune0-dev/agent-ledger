@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 DEFAULT_MAX_SIZE = 10_000
 DEFAULT_TTL_SECONDS = 60 * 60
+STALE_THRESHOLD_MS = 60_000
 
 
 class MemoryStore:
@@ -179,6 +180,55 @@ class MemoryStore:
                 completed_at=effect.completed_at,
             )
             self._cache[effect_id] = updated
+
+    async def claim_for_processing(
+        self,
+        effect_id: str,
+        from_status: EffectStatus,
+        stale_threshold_ms: int | None = None,
+        tx: None = None,
+    ) -> bool:
+        async with self._lock:
+            effect = self._cache.get(effect_id)
+            if effect is None:
+                return False
+
+            now = datetime.now(tz=timezone.utc)
+
+            if (
+                from_status == EffectStatus.PROCESSING
+                and stale_threshold_ms is not None
+            ):
+                # Stale claim: check status AND age
+                if effect.status != EffectStatus.PROCESSING:
+                    return False
+                age_ms = (now - effect.updated_at).total_seconds() * 1000
+                if age_ms <= stale_threshold_ms:
+                    return False
+            else:
+                # READY claim: just check status
+                if effect.status != from_status:
+                    return False
+
+            # Claim it by updating to PROCESSING with fresh timestamp
+            updated = Effect(
+                id=effect.id,
+                idem_key=effect.idem_key,
+                workflow_id=effect.workflow_id,
+                call_id=effect.call_id,
+                tool=effect.tool,
+                status=EffectStatus.PROCESSING,
+                args_canonical=effect.args_canonical,
+                resource_id_canonical=effect.resource_id_canonical,
+                result=effect.result,
+                error=effect.error,
+                dedup_count=effect.dedup_count,
+                created_at=effect.created_at,
+                updated_at=now,
+                completed_at=effect.completed_at,
+            )
+            self._cache[effect_id] = updated
+            return True
 
     def clear(self) -> None:
         self._cache.clear()
