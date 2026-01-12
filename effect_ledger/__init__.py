@@ -6,6 +6,7 @@ from effect_ledger.errors import (
     EffectTimeoutError,
 )
 from effect_ledger.ledger import EffectLedger, EffectLedgerOptions
+from effect_ledger.observability import get_logger, get_tracer
 from effect_ledger.stores import EffectStore, MemoryStore
 from effect_ledger.types import (
     AWAITING_STATUSES,
@@ -70,6 +71,8 @@ __all__ = [
     "canonicalize",
     "compute_idem_key",
     "generate_id",
+    "get_logger",
+    "get_tracer",
     "is_awaiting_status",
     "is_terminal_status",
     "resource_id_canonical",

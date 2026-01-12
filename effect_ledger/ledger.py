@@ -7,10 +7,22 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from opentelemetry import trace
+
 from effect_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
     EffectTimeoutError,
+)
+from effect_ledger.observability import (
+    clear_context,
+    get_tracer,
+    log_effect_created,
+    log_effect_replayed,
+    log_handler_error,
+    log_status_transition,
+    log_wait_timeout,
+    set_context,
 )
 from effect_ledger.types import (
     BeginResult,
@@ -153,42 +165,56 @@ class EffectLedger(Generic[TxT]):
         call: ToolCall,
         tx: TxT | None = None,
     ) -> BeginResult:
-        idem_key = compute_idem_key(call)
-        call_id = call.call_id or generate_id()
-        resource_canonical = (
-            resource_id_canonical(call.resource) if call.resource else call.tool
-        )
-        args_canonical = validate_args(call.args, self._max_args_size_bytes)
+        tracer = get_tracer()
+        with tracer.start_as_current_span(
+            "effect_ledger.begin",
+            attributes={"tool": call.tool, "workflow_id": call.workflow_id},
+        ) as span:
+            idem_key = compute_idem_key(call)
+            call_id = call.call_id or generate_id()
+            resource_canonical = (
+                resource_id_canonical(call.resource) if call.resource else call.tool
+            )
+            args_canonical = validate_args(call.args, self._max_args_size_bytes)
 
-        result = await self._store.upsert(
-            UpsertEffectInput(
-                idem_key=idem_key,
-                workflow_id=call.workflow_id,
-                call_id=call_id,
-                tool=call.tool,
-                status=EffectStatus.PROCESSING,
-                args_canonical=args_canonical,
-                resource_id_canonical=resource_canonical,
-            ),
-            tx,
-        )
+            span.set_attribute("idem_key", idem_key)
 
-        if not result.created:
-            await self._store.increment_dedup_count(idem_key, tx)
-            cached = is_terminal_status(result.effect.status)
+            result = await self._store.upsert(
+                UpsertEffectInput(
+                    idem_key=idem_key,
+                    workflow_id=call.workflow_id,
+                    call_id=call_id,
+                    tool=call.tool,
+                    status=EffectStatus.PROCESSING,
+                    args_canonical=args_canonical,
+                    resource_id_canonical=resource_canonical,
+                ),
+                tx,
+            )
+
+            if not result.created:
+                await self._store.increment_dedup_count(idem_key, tx)
+                cached = is_terminal_status(result.effect.status)
+                span.set_attribute("idempotency_status", "replayed")
+                span.set_attribute("effect_id", result.effect.id)
+                log_effect_replayed(result.effect)
+
+                return BeginResult(
+                    effect=result.effect,
+                    cached=cached,
+                    idempotency_status="replayed",
+                    cached_result=result.effect.result,
+                )
+
+            span.set_attribute("idempotency_status", "fresh")
+            span.set_attribute("effect_id", result.effect.id)
+            log_effect_created(result.effect)
 
             return BeginResult(
                 effect=result.effect,
-                cached=cached,
-                idempotency_status="replayed",
-                cached_result=result.effect.result,
+                cached=False,
+                idempotency_status="fresh",
             )
-
-        return BeginResult(
-            effect=result.effect,
-            cached=False,
-            idempotency_status="fresh",
-        )
 
     async def commit(
         self,
@@ -196,23 +222,43 @@ class EffectLedger(Generic[TxT]):
         outcome: CommitOutcome,
         tx: TxT | None = None,
     ) -> bool:
-        """Commit an effect outcome. Returns True if committed, False if state changed."""
-        if isinstance(outcome, CommitSucceeded):
-            return await self._store.transition(
+        tracer = get_tracer()
+        to_status = (
+            EffectStatus.SUCCEEDED
+            if isinstance(outcome, CommitSucceeded)
+            else EffectStatus.FAILED
+        )
+
+        with tracer.start_as_current_span(
+            "effect_ledger.commit",
+            attributes={"effect_id": effect_id, "to_status": to_status.value},
+        ):
+            if isinstance(outcome, CommitSucceeded):
+                success = await self._store.transition(
+                    effect_id,
+                    EffectStatus.PROCESSING,
+                    EffectStatus.SUCCEEDED,
+                    result=outcome.result,
+                    tx=tx,
+                )
+                log_status_transition(
+                    effect_id, EffectStatus.PROCESSING, EffectStatus.SUCCEEDED, success
+                )
+                return success
+
+            success = await self._store.transition(
                 effect_id,
                 EffectStatus.PROCESSING,
-                EffectStatus.SUCCEEDED,
-                result=outcome.result,
+                EffectStatus.FAILED,
+                error={"code": outcome.error.code, "message": outcome.error.message},
                 tx=tx,
             )
 
-        return await self._store.transition(
-            effect_id,
-            EffectStatus.PROCESSING,
-            EffectStatus.FAILED,
-            error={"code": outcome.error.code, "message": outcome.error.message},
-            tx=tx,
-        )
+            log_status_transition(
+                effect_id, EffectStatus.PROCESSING, EffectStatus.FAILED, success
+            )
+
+            return success
 
     async def _wait_for_terminal(
         self,
@@ -220,38 +266,53 @@ class EffectLedger(Generic[TxT]):
         opts: MergedOptions,
         tx: TxT | None = None,
     ) -> Effect:
-        deadline = asyncio.get_event_loop().time() + (
-            opts.concurrency.wait_timeout_ms / 1000
-        )
+        tracer = get_tracer()
+        with tracer.start_as_current_span(
+            "effect_ledger.wait_for_terminal",
+            attributes={
+                "idem_key": idem_key,
+                "timeout_ms": opts.concurrency.wait_timeout_ms,
+            },
+        ) as span:
+            deadline = asyncio.get_event_loop().time() + (
+                opts.concurrency.wait_timeout_ms / 1000
+            )
 
-        interval = opts.concurrency.initial_interval_ms
+            interval = opts.concurrency.initial_interval_ms
+            poll_count = 0
 
-        while True:
-            effect = await self._store.find_by_idem_key(idem_key, tx)
-            if effect is None:
-                raise RuntimeError(f"Effect {idem_key} disappeared while waiting")
+            while True:
+                poll_count += 1
+                effect = await self._store.find_by_idem_key(idem_key, tx)
 
-            if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
-                raise EffectDeniedError(
-                    effect.idem_key,
-                    effect.error.message if effect.error else None,
-                )
+                if effect is None:
+                    raise RuntimeError(f"Effect {idem_key} disappeared while waiting")
 
-            if (
-                is_terminal_status(effect.status)
-                or effect.status == EffectStatus.READY
-                or _is_effect_stale(effect, opts.stale.after_ms)
-            ):
-                return effect
+                if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
+                    raise EffectDeniedError(
+                        effect.idem_key,
+                        effect.error.message if effect.error else None,
+                    )
 
-            # Check deadline before sleeping
-            if asyncio.get_event_loop().time() >= deadline:
-                raise EffectTimeoutError(idem_key, opts.concurrency.wait_timeout_ms)
+                if (
+                    is_terminal_status(effect.status)
+                    or effect.status == EffectStatus.READY
+                    or _is_effect_stale(effect, opts.stale.after_ms)
+                ):
+                    span.set_attribute("poll_count", poll_count)
+                    span.set_attribute("resolved_status", effect.status.value)
 
-            await asyncio.sleep(interval / 1000)
-            interval = _compute_next_interval(interval, opts.concurrency)
+                    return effect
 
-        raise EffectTimeoutError(idem_key, opts.concurrency.wait_timeout_ms)
+                if asyncio.get_event_loop().time() >= deadline:
+                    span.set_attribute("poll_count", poll_count)
+                    span.set_attribute("timed_out", True)
+                    log_wait_timeout(idem_key, opts.concurrency.wait_timeout_ms)
+
+                    raise EffectTimeoutError(idem_key, opts.concurrency.wait_timeout_ms)
+
+                await asyncio.sleep(interval / 1000)
+                interval = _compute_next_interval(interval, opts.concurrency)
 
     async def run(
         self,
@@ -260,83 +321,130 @@ class EffectLedger(Generic[TxT]):
         tx: TxT | None = None,
         run_options: RunOptions | None = None,
     ) -> Any:
-        merged = _merge_options(
-            self._defaults.run if self._defaults else None,
-            run_options,
+        tracer = get_tracer()
+        idem_key = compute_idem_key(call)
+
+        set_context(
+            workflow_id=call.workflow_id,
+            idem_key=idem_key,
+            tool=call.tool,
         )
 
-        requires_approval = run_options.requires_approval if run_options else False
-
-        begin_result = await self.begin(call, tx)
-        effect = begin_result.effect
-
-        if begin_result.idempotency_status == "fresh":
-            if requires_approval:
-                await self.request_approval(effect.idem_key, tx)
-
-                resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
-                # Must claim before executing - multiple waiters may have woken up
-                return await self._handle_resolved_effect(resolved, handler, merged, tx)
-
-            return await self._execute_handler(effect, handler, tx)
-
-        if begin_result.cached:
-            if effect.status == EffectStatus.FAILED and effect.error:
-                raise EffectFailedError(
-                    effect.idem_key,
-                    {"code": effect.error.code, "message": effect.error.message},
+        try:
+            with tracer.start_as_current_span(
+                "effect_ledger.run",
+                attributes={
+                    "tool": call.tool,
+                    "workflow_id": call.workflow_id,
+                    "idem_key": idem_key,
+                },
+            ) as span:
+                merged = _merge_options(
+                    self._defaults.run if self._defaults else None,
+                    run_options,
                 )
 
-            if begin_result.cached_result is not None:
-                return begin_result.cached_result
-
-            if effect.result is not None:
-                return effect.result
-
-        if effect.status == EffectStatus.PROCESSING:
-            if _is_effect_stale(effect, merged.stale.after_ms):
-                return await self._claim_and_execute(
-                    effect,
-                    EffectStatus.PROCESSING,
-                    handler,
-                    merged,
-                    tx,
-                    stale_threshold_ms=merged.stale.after_ms,
+                requires_approval = (
+                    run_options.requires_approval if run_options else False
                 )
 
-            resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
-            return await self._handle_resolved_effect(resolved, handler, merged, tx)
+                begin_result = await self.begin(call, tx)
+                effect = begin_result.effect
 
-        if effect.status == EffectStatus.REQUIRES_APPROVAL:
-            resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
-            return await self._handle_resolved_effect(resolved, handler, merged, tx)
+                span.set_attribute("effect_id", effect.id)
+                set_context(effect_id=effect.id)
 
-        if effect.status == EffectStatus.READY:
-            return await self._claim_and_execute(
-                effect, EffectStatus.READY, handler, merged, tx
-            )
+                if begin_result.idempotency_status == "fresh":
+                    if requires_approval:
+                        await self.request_approval(effect.idem_key, tx)
 
-        if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
-            raise EffectDeniedError(
-                effect.idem_key,
-                effect.error.message if effect.error else None,
-            )
+                        resolved = await self._wait_for_terminal(
+                            effect.idem_key, merged, tx
+                        )
 
-        if is_terminal_status(effect.status):
-            if effect.status == EffectStatus.FAILED and effect.error:
-                raise EffectFailedError(
-                    effect.idem_key,
-                    {"code": effect.error.code, "message": effect.error.message},
+                        return await self._handle_resolved_effect(
+                            resolved, handler, merged, tx
+                        )
+
+                    return await self._execute_handler(effect, handler, tx)
+
+                if begin_result.cached:
+                    if effect.status == EffectStatus.FAILED and effect.error:
+                        raise EffectFailedError(
+                            effect.idem_key,
+                            {
+                                "code": effect.error.code,
+                                "message": effect.error.message,
+                            },
+                        )
+
+                    if begin_result.cached_result is not None:
+                        return begin_result.cached_result
+
+                    if effect.result is not None:
+                        return effect.result
+
+                if effect.status == EffectStatus.PROCESSING:
+                    if _is_effect_stale(effect, merged.stale.after_ms):
+                        return await self._claim_and_execute(
+                            effect,
+                            EffectStatus.PROCESSING,
+                            handler,
+                            merged,
+                            tx,
+                            stale_threshold_ms=merged.stale.after_ms,
+                        )
+
+                    resolved = await self._wait_for_terminal(
+                        effect.idem_key, merged, tx
+                    )
+
+                    return await self._handle_resolved_effect(
+                        resolved, handler, merged, tx
+                    )
+
+                if effect.status == EffectStatus.REQUIRES_APPROVAL:
+                    resolved = await self._wait_for_terminal(
+                        effect.idem_key, merged, tx
+                    )
+
+                    return await self._handle_resolved_effect(
+                        resolved, handler, merged, tx
+                    )
+
+                if effect.status == EffectStatus.READY:
+                    return await self._claim_and_execute(
+                        effect, EffectStatus.READY, handler, merged, tx
+                    )
+
+                if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
+                    raise EffectDeniedError(
+                        effect.idem_key,
+                        effect.error.message if effect.error else None,
+                    )
+
+                if is_terminal_status(effect.status):
+                    if effect.status == EffectStatus.FAILED and effect.error:
+                        raise EffectFailedError(
+                            effect.idem_key,
+                            {
+                                "code": effect.error.code,
+                                "message": effect.error.message,
+                            },
+                        )
+
+                    if effect.result is not None:
+                        return effect.result
+
+                    raise RuntimeError(
+                        f"Effect {effect.id} is terminal but has no result"
+                    )
+
+                raise RuntimeError(
+                    f"Effect {effect.idem_key} in unexpected state: {effect.status}"
                 )
-
-            if effect.result is not None:
-                return effect.result
-
-            raise RuntimeError(f"Effect {effect.id} is terminal but has no result")
-
-        raise RuntimeError(
-            f"Effect {effect.idem_key} in unexpected state: {effect.status}"
-        )
+        finally:
+            clear_context()
 
     async def _claim_and_execute(
         self,
@@ -478,6 +586,8 @@ class EffectLedger(Generic[TxT]):
 
             return result
         except Exception as err:
+            log_handler_error(effect.id, err)
+
             # Don't wrap our own errors
             if isinstance(err, (EffectFailedError, EffectDeniedError)):
                 raise
