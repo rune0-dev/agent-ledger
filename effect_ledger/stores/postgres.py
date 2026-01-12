@@ -125,7 +125,9 @@ class PostgresStore:
                     input_data.status.value,
                     input_data.args_canonical,
                     input_data.resource_id_canonical,
-                    json.dumps(input_data.result) if input_data.result else None,
+                    json.dumps(input_data.result)
+                    if input_data.result is not None
+                    else None,
                     json.dumps(
                         {
                             "message": input_data.error.message,

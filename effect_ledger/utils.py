@@ -6,8 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 import rfc8785
 
+from effect_ledger.errors import EffectLedgerValidationError
+
 if TYPE_CHECKING:
     from effect_ledger.types import ResourceDescriptor, ToolCall
+
+DEFAULT_MAX_ARGS_SIZE_BYTES = 1024 * 1024  # 1MB
 
 
 def _sha256(data: bytes) -> str:
@@ -15,14 +19,36 @@ def _sha256(data: bytes) -> str:
 
 
 def canonicalize(obj: Any) -> str:
-    return rfc8785.dumps(obj).decode("utf-8")
+    try:
+        return rfc8785.dumps(obj).decode("utf-8")
+    except (TypeError, ValueError) as e:
+        raise EffectLedgerValidationError(
+            f"Args must be JSON-serializable: {e}", field="args"
+        ) from e
+
+
+def validate_args(args: dict[str, Any], max_size_bytes: int | None = None) -> str:
+    if not isinstance(args, dict):
+        raise EffectLedgerValidationError(
+            f"Args must be a dict, got {type(args).__name__}", field="args"
+        )
+
+    canonical = canonicalize(args)
+    limit = max_size_bytes or DEFAULT_MAX_ARGS_SIZE_BYTES
+
+    if len(canonical.encode("utf-8")) > limit:
+        raise EffectLedgerValidationError(
+            f"Args exceed maximum size of {limit} bytes", field="args"
+        )
+
+    return canonical
 
 
 def resource_id_canonical(resource: ResourceDescriptor) -> str:
-    id_parts = "/".join(
-        f"{k}={v}" for k, v in sorted(resource.id.items(), key=lambda x: x[0])
-    )
-    return f"{resource.namespace}/{resource.type}/{id_parts}"
+    """Canonicalize resource descriptor using RFC8785 for stable hashing."""
+    # Use RFC8785 canonicalization for the entire id dict to ensure stability
+    canonical_id = canonicalize(dict(sorted(resource.id.items())))
+    return f"{resource.namespace}/{resource.type}/{canonical_id}"
 
 
 def _pick(obj: dict[str, Any], keys: list[str]) -> dict[str, Any]:

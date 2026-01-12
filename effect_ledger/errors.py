@@ -5,6 +5,14 @@ class EffectLedgerError(Exception):
     pass
 
 
+class EffectLedgerValidationError(EffectLedgerError):
+    """Raised when input validation fails."""
+
+    def __init__(self, message: str, field: str | None = None) -> None:
+        self.field = field
+        super().__init__(message)
+
+
 class EffectDeniedError(EffectLedgerError):
     def __init__(self, idem_key: str, reason: str | None = None) -> None:
         self.idem_key = idem_key

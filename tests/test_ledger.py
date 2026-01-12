@@ -8,6 +8,7 @@ from effect_ledger import (
     EffectFailedError,
     EffectLedger,
     EffectLedgerOptions,
+    EffectLedgerValidationError,
     EffectStatus,
     MemoryStore,
     RunOptions,
@@ -543,3 +544,37 @@ class TestConcurrency:
         assert all(r == {"executed": True} for r in results)
         # Only one execution
         assert execution_count == 1
+
+
+class TestValidation:
+    async def test_rejects_non_json_serializable_args(self, store: MemoryStore) -> None:
+        ledger = EffectLedger(EffectLedgerOptions(store=store))
+
+        with pytest.raises(EffectLedgerValidationError) as exc_info:
+            await ledger.begin(make_call(args={"func": lambda x: x}))
+
+        assert exc_info.value.field == "args"
+        assert "JSON-serializable" in str(exc_info.value)
+
+    async def test_rejects_args_exceeding_size_limit(self, store: MemoryStore) -> None:
+        ledger = EffectLedger(EffectLedgerOptions(store=store, max_args_size_bytes=100))
+
+        with pytest.raises(EffectLedgerValidationError) as exc_info:
+            await ledger.begin(make_call(args={"data": "x" * 200}))
+
+        assert exc_info.value.field == "args"
+        assert "exceed maximum size" in str(exc_info.value)
+
+    async def test_rejects_non_dict_args(self, store: MemoryStore) -> None:
+        ledger = EffectLedger(EffectLedgerOptions(store=store))
+        call = ToolCall(
+            workflow_id="test",
+            tool="test.tool",
+            args=["not", "a", "dict"],  # type: ignore
+        )
+
+        with pytest.raises(EffectLedgerValidationError) as exc_info:
+            await ledger.begin(call)
+
+        assert exc_info.value.field == "args"
+        assert "must be a dict" in str(exc_info.value)

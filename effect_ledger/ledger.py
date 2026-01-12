@@ -27,10 +27,10 @@ from effect_ledger.types import (
     is_terminal_status,
 )
 from effect_ledger.utils import (
-    canonicalize,
     compute_idem_key,
     generate_id,
     resource_id_canonical,
+    validate_args,
 )
 
 if TYPE_CHECKING:
@@ -139,12 +139,14 @@ def _is_effect_stale(effect: Effect, stale_after_ms: int) -> bool:
 class EffectLedgerOptions(Generic[TxT]):
     store: EffectStore[TxT]
     defaults: LedgerDefaults | None = None
+    max_args_size_bytes: int | None = None
 
 
 class EffectLedger(Generic[TxT]):
     def __init__(self, options: EffectLedgerOptions[TxT]) -> None:
         self._store = options.store
         self._defaults = options.defaults
+        self._max_args_size_bytes = options.max_args_size_bytes
 
     async def begin(
         self,
@@ -156,6 +158,7 @@ class EffectLedger(Generic[TxT]):
         resource_canonical = (
             resource_id_canonical(call.resource) if call.resource else call.tool
         )
+        args_canonical = validate_args(call.args, self._max_args_size_bytes)
 
         result = await self._store.upsert(
             UpsertEffectInput(
@@ -164,7 +167,7 @@ class EffectLedger(Generic[TxT]):
                 call_id=call_id,
                 tool=call.tool,
                 status=EffectStatus.PROCESSING,
-                args_canonical=canonicalize(call.args),
+                args_canonical=args_canonical,
                 resource_id_canonical=resource_canonical,
             ),
             tx,
@@ -192,9 +195,10 @@ class EffectLedger(Generic[TxT]):
         effect_id: str,
         outcome: CommitOutcome,
         tx: TxT | None = None,
-    ) -> None:
+    ) -> bool:
+        """Commit an effect outcome. Returns True if committed, False if state changed."""
         if isinstance(outcome, CommitSucceeded):
-            await self._store.transition(
+            return await self._store.transition(
                 effect_id,
                 EffectStatus.PROCESSING,
                 EffectStatus.SUCCEEDED,
@@ -202,9 +206,7 @@ class EffectLedger(Generic[TxT]):
                 tx=tx,
             )
 
-            return
-
-        await self._store.transition(
+        return await self._store.transition(
             effect_id,
             EffectStatus.PROCESSING,
             EffectStatus.FAILED,
@@ -224,9 +226,7 @@ class EffectLedger(Generic[TxT]):
 
         interval = opts.concurrency.initial_interval_ms
 
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(interval / 1000)
-
+        while True:
             effect = await self._store.find_by_idem_key(idem_key, tx)
             if effect is None:
                 raise RuntimeError(f"Effect {idem_key} disappeared while waiting")
@@ -244,6 +244,11 @@ class EffectLedger(Generic[TxT]):
             ):
                 return effect
 
+            # Check deadline before sleeping
+            if asyncio.get_event_loop().time() >= deadline:
+                raise EffectTimeoutError(idem_key, opts.concurrency.wait_timeout_ms)
+
+            await asyncio.sleep(interval / 1000)
             interval = _compute_next_interval(interval, opts.concurrency)
 
         raise EffectTimeoutError(idem_key, opts.concurrency.wait_timeout_ms)
@@ -408,7 +413,7 @@ class EffectLedger(Generic[TxT]):
                 effect.error.message if effect.error else None,
             )
 
-        if effect.status == EffectStatus.SUCCEEDED and effect.result is not None:
+        if effect.status == EffectStatus.SUCCEEDED:
             return effect.result
 
         if effect.status == EffectStatus.READY:
@@ -425,6 +430,11 @@ class EffectLedger(Generic[TxT]):
                 tx,
                 stale_threshold_ms=merged.stale.after_ms,
             )
+
+        # PROCESSING but not stale - wait for the other worker to finish
+        if effect.status == EffectStatus.PROCESSING:
+            resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
+            return await self._handle_resolved_effect(resolved, handler, merged, tx)
 
         raise RuntimeError(
             f"Effect {effect.idem_key} in unexpected state: {effect.status}"

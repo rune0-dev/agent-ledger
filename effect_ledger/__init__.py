@@ -2,6 +2,7 @@ from effect_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
     EffectLedgerError,
+    EffectLedgerValidationError,
     EffectTimeoutError,
 )
 from effect_ledger.ledger import EffectLedger, EffectLedgerOptions
@@ -34,6 +35,7 @@ from effect_ledger.utils import (
     compute_idem_key,
     generate_id,
     resource_id_canonical,
+    validate_args,
 )
 
 __all__ = [
@@ -51,6 +53,7 @@ __all__ = [
     "EffectLedger",
     "EffectLedgerError",
     "EffectLedgerOptions",
+    "EffectLedgerValidationError",
     "EffectStatus",
     "EffectStore",
     "EffectTimeoutError",
@@ -70,6 +73,7 @@ __all__ = [
     "is_awaiting_status",
     "is_terminal_status",
     "resource_id_canonical",
+    "validate_args",
 ]
 
 __version__ = "0.1.0"

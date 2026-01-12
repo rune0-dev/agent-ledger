@@ -9,7 +9,6 @@ JsonValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 
 
 class EffectStatus(str, Enum):
-    CREATED = "created"
     REQUIRES_APPROVAL = "requires_approval"
     READY = "ready"
     PROCESSING = "processing"
