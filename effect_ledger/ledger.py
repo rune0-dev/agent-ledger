@@ -7,11 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from opentelemetry import trace
-
 from effect_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
+    EffectLedgerInvariantError,
     EffectTimeoutError,
 )
 from effect_ledger.observability import (
@@ -122,6 +121,7 @@ def _merge_options(
         )
         or DEFAULT_CONCURRENCY.jitter_factor,
     )
+
     stale = StaleOptions(
         after_ms=(per_call and per_call.stale and per_call.stale.after_ms)
         or (
@@ -131,6 +131,7 @@ def _merge_options(
         )
         or DEFAULT_STALE.after_ms,
     )
+
     return MergedOptions(concurrency=concurrency, stale=stale)
 
 
@@ -195,6 +196,7 @@ class EffectLedger(Generic[TxT]):
             if not result.created:
                 await self._store.increment_dedup_count(idem_key, tx)
                 cached = is_terminal_status(result.effect.status)
+
                 span.set_attribute("idempotency_status", "replayed")
                 span.set_attribute("effect_id", result.effect.id)
                 log_effect_replayed(result.effect)
@@ -286,7 +288,9 @@ class EffectLedger(Generic[TxT]):
                 effect = await self._store.find_by_idem_key(idem_key, tx)
 
                 if effect is None:
-                    raise RuntimeError(f"Effect {idem_key} disappeared while waiting")
+                    raise EffectLedgerInvariantError(
+                        f"Effect {idem_key} disappeared while waiting"
+                    )
 
                 if effect.status in (EffectStatus.DENIED, EffectStatus.CANCELED):
                     raise EffectDeniedError(
@@ -436,11 +440,11 @@ class EffectLedger(Generic[TxT]):
                     if effect.result is not None:
                         return effect.result
 
-                    raise RuntimeError(
+                    raise EffectLedgerInvariantError(
                         f"Effect {effect.id} is terminal but has no result"
                     )
 
-                raise RuntimeError(
+                raise EffectLedgerInvariantError(
                     f"Effect {effect.idem_key} in unexpected state: {effect.status}"
                 )
         finally:
@@ -497,7 +501,7 @@ class EffectLedger(Generic[TxT]):
                 effect.error.message if effect.error else None,
             )
 
-        raise RuntimeError(
+        raise EffectLedgerInvariantError(
             f"Effect {effect.idem_key} in unexpected terminal state: {effect.status}"
         )
 
@@ -544,7 +548,7 @@ class EffectLedger(Generic[TxT]):
             resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
             return await self._handle_resolved_effect(resolved, handler, merged, tx)
 
-        raise RuntimeError(
+        raise EffectLedgerInvariantError(
             f"Effect {effect.idem_key} in unexpected state: {effect.status}"
         )
 
@@ -573,14 +577,14 @@ class EffectLedger(Generic[TxT]):
                 # Re-fetch and return the actual terminal result
                 final = await self._store.find_by_idem_key(effect.idem_key, tx)
                 if final is None:
-                    raise RuntimeError(
+                    raise EffectLedgerInvariantError(
                         f"Effect {effect.idem_key} disappeared during commit"
                     )
 
                 if is_terminal_status(final.status):
                     return self._return_terminal_result(final)
 
-                raise RuntimeError(
+                raise EffectLedgerInvariantError(
                     f"Effect {effect.idem_key} commit failed, status is {final.status}"
                 )
 

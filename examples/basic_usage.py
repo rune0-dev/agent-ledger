@@ -49,7 +49,7 @@ async def main() -> None:
                 },
             ),
         ),
-        handler=lambda effect: mock_github_create_issue(params),
+        handler=lambda _: mock_github_create_issue(params),
     )
     print(f"  Result: Issue #{result1['id']}\n")
 
@@ -69,7 +69,7 @@ async def main() -> None:
                 },
             ),
         ),
-        handler=lambda effect: mock_github_create_issue(params),
+        handler=lambda _: mock_github_create_issue(params),
     )
     print(f"  Result: Issue #{result2['id']} (cached, no API call)\n")
 
@@ -95,7 +95,7 @@ async def main() -> None:
                 },
             ),
         ),
-        handler=lambda effect: mock_github_create_issue(params2),
+        handler=lambda _: mock_github_create_issue(params2),
     )
     print(f"  Result: Issue #{result3['id']}\n")
 
@@ -113,7 +113,7 @@ async def main() -> None:
             args=params3,
             idempotency_keys=["owner", "repo", "title"],
         ),
-        handler=lambda effect: mock_github_create_issue(params3),
+        handler=lambda _: mock_github_create_issue(params3),
     )
     print(f"  Result: Issue #{result4['id']}\n")
 
@@ -131,7 +131,7 @@ async def main() -> None:
             args=params4,
             idempotency_keys=["owner", "repo", "title"],
         ),
-        handler=lambda effect: mock_github_create_issue(params4),
+        handler=lambda _: mock_github_create_issue(params4),
     )
     print(f"  Result: Issue #{result5['id']} (cached)\n")
 

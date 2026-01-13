@@ -2,7 +2,9 @@ from effect_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
     EffectLedgerError,
+    EffectLedgerInvariantError,
     EffectLedgerValidationError,
+    EffectStoreError,
     EffectTimeoutError,
 )
 from effect_ledger.ledger import EffectLedger, EffectLedgerOptions
@@ -53,10 +55,12 @@ __all__ = [
     "EffectFailedError",
     "EffectLedger",
     "EffectLedgerError",
+    "EffectLedgerInvariantError",
     "EffectLedgerOptions",
     "EffectLedgerValidationError",
     "EffectStatus",
     "EffectStore",
+    "EffectStoreError",
     "EffectTimeoutError",
     "IdempotencyStatus",
     "JsonValue",

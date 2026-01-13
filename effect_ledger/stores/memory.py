@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 
+from effect_ledger.errors import EffectStoreError
 from effect_ledger.types import (
     Effect,
     EffectError,
@@ -47,56 +48,83 @@ class MemoryStore:
         idem_key: str,
         tx: None = None,
     ) -> Effect | None:
-        effect_id = self._idem_key_to_id.get(idem_key)
-        if effect_id is None:
-            return None
-        result: Effect | None = self._cache.get(effect_id)
-        return result
+        try:
+            effect_id = self._idem_key_to_id.get(idem_key)
+            if effect_id is None:
+                return None
+            result: Effect | None = self._cache.get(effect_id)
+            return result
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to find effect by idem_key: {err}",
+                operation="find_by_idem_key",
+                idem_key=idem_key,
+            ) from err
 
     async def find_by_id(
         self,
         effect_id: str,
         tx: None = None,
     ) -> Effect | None:
-        result: Effect | None = self._cache.get(effect_id)
-        return result
+        try:
+            result: Effect | None = self._cache.get(effect_id)
+            return result
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to find effect by id: {err}",
+                operation="find_by_id",
+                effect_id=effect_id,
+            ) from err
 
     async def upsert(
         self,
         input_data: UpsertEffectInput,
         tx: None = None,
     ) -> UpsertEffectResult:
-        async with self._lock:
-            existing_id = self._idem_key_to_id.get(input_data.idem_key)
-            existing = self._cache.get(existing_id) if existing_id else None
+        try:
+            async with self._lock:
+                existing_id = self._idem_key_to_id.get(input_data.idem_key)
+                existing = self._cache.get(existing_id) if existing_id else None
 
-            if existing is not None:
-                return UpsertEffectResult(effect=existing, created=False)
+                if existing is not None:
+                    return UpsertEffectResult(effect=existing, created=False)
 
-            now = datetime.now(tz=timezone.utc)
-            effect_id = generate_id()
+                now = datetime.now(tz=timezone.utc)
+                effect_id = generate_id()
 
-            effect = Effect(
-                id=effect_id,
+                effect = Effect(
+                    id=effect_id,
+                    idem_key=input_data.idem_key,
+                    workflow_id=input_data.workflow_id,
+                    call_id=input_data.call_id,
+                    tool=input_data.tool,
+                    status=input_data.status,
+                    args_canonical=input_data.args_canonical,
+                    resource_id_canonical=input_data.resource_id_canonical,
+                    result=input_data.result,
+                    error=input_data.error,
+                    dedup_count=0,
+                    created_at=now,
+                    updated_at=now,
+                    completed_at=now if is_terminal_status(input_data.status) else None,
+                )
+
+                self._cache[effect_id] = effect
+                self._idem_key_to_id[input_data.idem_key] = effect_id
+
+                return UpsertEffectResult(effect=effect, created=True)
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to upsert effect: {err}",
+                operation="upsert",
                 idem_key=input_data.idem_key,
-                workflow_id=input_data.workflow_id,
-                call_id=input_data.call_id,
-                tool=input_data.tool,
-                status=input_data.status,
-                args_canonical=input_data.args_canonical,
-                resource_id_canonical=input_data.resource_id_canonical,
-                result=input_data.result,
-                error=input_data.error,
-                dedup_count=0,
-                created_at=now,
-                updated_at=now,
-                completed_at=now if is_terminal_status(input_data.status) else None,
-            )
-
-            self._cache[effect_id] = effect
-            self._idem_key_to_id[input_data.idem_key] = effect_id
-
-            return UpsertEffectResult(effect=effect, created=True)
+            ) from err
 
     async def transition(
         self,
@@ -107,83 +135,104 @@ class MemoryStore:
         error: dict[str, str | None] | None = None,
         tx: None = None,
     ) -> bool:
-        async with self._lock:
-            effect = self._cache.get(effect_id)
+        try:
+            async with self._lock:
+                effect = self._cache.get(effect_id)
 
-            if effect is None:
-                return False
+                if effect is None:
+                    return False
 
-            # CAS: status must match AND must not be terminal (atomic check)
-            if effect.status != from_status:
-                return False
+                if effect.status != from_status:
+                    return False
 
-            if is_terminal_status(effect.status):
-                return False
+                if is_terminal_status(effect.status):
+                    return False
 
-            now = datetime.now(tz=timezone.utc)
-            error_obj = (
-                EffectError(
-                    message=error.get("message") or "",
-                    code=error.get("code"),
+                now = datetime.now(tz=timezone.utc)
+                error_obj = (
+                    EffectError(
+                        message=error.get("message") or "",
+                        code=error.get("code"),
+                    )
+                    if error
+                    else None
                 )
-                if error
-                else None
-            )
 
-            updated = Effect(
-                id=effect.id,
-                idem_key=effect.idem_key,
-                workflow_id=effect.workflow_id,
-                call_id=effect.call_id,
-                tool=effect.tool,
-                status=to_status,
-                args_canonical=effect.args_canonical,
-                resource_id_canonical=effect.resource_id_canonical,
-                result=result if result is not None else effect.result,
-                error=error_obj if error_obj else effect.error,
-                dedup_count=effect.dedup_count,
-                created_at=effect.created_at,
-                updated_at=now,
-                completed_at=now
-                if is_terminal_status(to_status)
-                else effect.completed_at,
-            )
+                updated = Effect(
+                    id=effect.id,
+                    idem_key=effect.idem_key,
+                    workflow_id=effect.workflow_id,
+                    call_id=effect.call_id,
+                    tool=effect.tool,
+                    status=to_status,
+                    args_canonical=effect.args_canonical,
+                    resource_id_canonical=effect.resource_id_canonical,
+                    result=result if result is not None else effect.result,
+                    error=error_obj if error_obj else effect.error,
+                    dedup_count=effect.dedup_count,
+                    created_at=effect.created_at,
+                    updated_at=now,
+                    completed_at=now
+                    if is_terminal_status(to_status)
+                    else effect.completed_at,
+                )
 
-            self._cache[effect_id] = updated
-            return True
+                self._cache[effect_id] = updated
+                return True
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to transition effect: {err}",
+                operation="transition",
+                effect_id=effect_id,
+                details={
+                    "from_status": from_status.value,
+                    "to_status": to_status.value,
+                },
+            ) from err
 
     async def increment_dedup_count(
         self,
         idem_key: str,
         tx: None = None,
     ) -> None:
-        async with self._lock:
-            effect_id = self._idem_key_to_id.get(idem_key)
-            if effect_id is None:
-                return
+        try:
+            async with self._lock:
+                effect_id = self._idem_key_to_id.get(idem_key)
+                if effect_id is None:
+                    return
 
-            effect = self._cache.get(effect_id)
-            if effect is None:
-                return
+                effect = self._cache.get(effect_id)
+                if effect is None:
+                    return
 
-            now = datetime.now(tz=timezone.utc)
-            updated = Effect(
-                id=effect.id,
-                idem_key=effect.idem_key,
-                workflow_id=effect.workflow_id,
-                call_id=effect.call_id,
-                tool=effect.tool,
-                status=effect.status,
-                args_canonical=effect.args_canonical,
-                resource_id_canonical=effect.resource_id_canonical,
-                result=effect.result,
-                error=effect.error,
-                dedup_count=effect.dedup_count + 1,
-                created_at=effect.created_at,
-                updated_at=now,
-                completed_at=effect.completed_at,
-            )
-            self._cache[effect_id] = updated
+                now = datetime.now(tz=timezone.utc)
+                updated = Effect(
+                    id=effect.id,
+                    idem_key=effect.idem_key,
+                    workflow_id=effect.workflow_id,
+                    call_id=effect.call_id,
+                    tool=effect.tool,
+                    status=effect.status,
+                    args_canonical=effect.args_canonical,
+                    resource_id_canonical=effect.resource_id_canonical,
+                    result=effect.result,
+                    error=effect.error,
+                    dedup_count=effect.dedup_count + 1,
+                    created_at=effect.created_at,
+                    updated_at=now,
+                    completed_at=effect.completed_at,
+                )
+                self._cache[effect_id] = updated
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to increment dedup count: {err}",
+                operation="increment_dedup_count",
+                idem_key=idem_key,
+            ) from err
 
     async def claim_for_processing(
         self,
@@ -192,49 +241,56 @@ class MemoryStore:
         stale_threshold_ms: int | None = None,
         tx: None = None,
     ) -> bool:
-        async with self._lock:
-            effect = self._cache.get(effect_id)
-            if effect is None:
-                return False
-
-            now = datetime.now(tz=timezone.utc)
-
-            if (
-                from_status == EffectStatus.PROCESSING
-                and stale_threshold_ms is not None
-            ):
-                # Stale claim: check status AND age
-                if effect.status != EffectStatus.PROCESSING:
-                    return False
-                age_ms = (now - effect.updated_at).total_seconds() * 1000
-                if age_ms <= stale_threshold_ms:
-                    return False
-            else:
-                # READY claim: check status AND ensure not terminal
-                if effect.status != from_status:
-                    return False
-                if is_terminal_status(effect.status):
+        try:
+            async with self._lock:
+                effect = self._cache.get(effect_id)
+                if effect is None:
                     return False
 
-            # Claim it by updating to PROCESSING with fresh timestamp
-            updated = Effect(
-                id=effect.id,
-                idem_key=effect.idem_key,
-                workflow_id=effect.workflow_id,
-                call_id=effect.call_id,
-                tool=effect.tool,
-                status=EffectStatus.PROCESSING,
-                args_canonical=effect.args_canonical,
-                resource_id_canonical=effect.resource_id_canonical,
-                result=effect.result,
-                error=effect.error,
-                dedup_count=effect.dedup_count,
-                created_at=effect.created_at,
-                updated_at=now,
-                completed_at=effect.completed_at,
-            )
-            self._cache[effect_id] = updated
-            return True
+                now = datetime.now(tz=timezone.utc)
+
+                if (
+                    from_status == EffectStatus.PROCESSING
+                    and stale_threshold_ms is not None
+                ):
+                    if effect.status != EffectStatus.PROCESSING:
+                        return False
+                    age_ms = (now - effect.updated_at).total_seconds() * 1000
+                    if age_ms <= stale_threshold_ms:
+                        return False
+                else:
+                    if effect.status != from_status:
+                        return False
+                    if is_terminal_status(effect.status):
+                        return False
+
+                updated = Effect(
+                    id=effect.id,
+                    idem_key=effect.idem_key,
+                    workflow_id=effect.workflow_id,
+                    call_id=effect.call_id,
+                    tool=effect.tool,
+                    status=EffectStatus.PROCESSING,
+                    args_canonical=effect.args_canonical,
+                    resource_id_canonical=effect.resource_id_canonical,
+                    result=effect.result,
+                    error=effect.error,
+                    dedup_count=effect.dedup_count,
+                    created_at=effect.created_at,
+                    updated_at=now,
+                    completed_at=effect.completed_at,
+                )
+                self._cache[effect_id] = updated
+                return True
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to claim effect for processing: {err}",
+                operation="claim_for_processing",
+                effect_id=effect_id,
+                details={"from_status": from_status.value},
+            ) from err
 
     def clear(self) -> None:
         self._cache.clear()

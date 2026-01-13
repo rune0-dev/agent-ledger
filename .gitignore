@@ -33,3 +33,4 @@ htmlcov/
 *~
 .DS_Store
 coverage.*
+.plans/*

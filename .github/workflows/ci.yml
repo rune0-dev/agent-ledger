@@ -27,10 +27,10 @@ jobs:
           pip install ruff mypy
 
       - name: Ruff lint
-        run: ruff check src/ tests/
+        run: ruff check effect_ledger/ tests/
 
       - name: Ruff format check
-        run: ruff format --check src/ tests/
+        run: ruff format --check effect_ledger/ tests/
 
       - name: Install package for type checking
         run: pip install -e .
@@ -45,6 +45,21 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: effect_ledger_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,9 +71,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,postgres]"
 
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/effect_ledger_test
         run: pytest --cov=effect_ledger --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage

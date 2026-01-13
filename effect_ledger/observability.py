@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
-from opentelemetry import trace
+try:
+    from opentelemetry import trace
+
+    _HAS_OTEL = True
+except ImportError:
+    _HAS_OTEL = False
+    trace = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from effect_ledger.types import Effect, EffectStatus
 
-_tracer = trace.get_tracer("effect_ledger")
 _logger = logging.getLogger("effect_ledger")
 _logger.addHandler(logging.NullHandler())
 
@@ -19,8 +26,32 @@ _effect_id: ContextVar[str | None] = ContextVar("effect_id", default=None)
 _tool: ContextVar[str | None] = ContextVar("tool", default=None)
 
 
-def get_tracer() -> trace.Tracer:
-    return _tracer
+class _NoOpSpan:
+    def set_attribute(self, key: str, value: Any) -> None:
+        pass
+
+    def __enter__(self) -> _NoOpSpan:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+
+class _NoOpTracer:
+    @contextmanager
+    def start_as_current_span(
+        self, name: str, **kwargs: Any
+    ) -> Generator[_NoOpSpan, None, None]:
+        yield _NoOpSpan()
+
+
+_noop_tracer = _NoOpTracer()
+
+
+def get_tracer() -> Any:
+    if _HAS_OTEL and trace is not None:
+        return trace.get_tracer("effect_ledger")
+    return _noop_tracer
 
 
 def get_logger() -> logging.Logger:
@@ -70,7 +101,10 @@ def log_event(
 ) -> None:
     ctx = get_context()
     ctx.update(extra)
-    _logger.log(level, event, extra=ctx)
+    # Include context in message for default formatter, also in extra for structured logging
+    parts = [f"{k}={v}" for k, v in ctx.items()]
+    msg = f"{event} {' '.join(parts)}" if parts else event
+    _logger.log(level, msg, extra=ctx)
 
 
 def log_effect_created(effect: Effect) -> None:

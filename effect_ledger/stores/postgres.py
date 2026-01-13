@@ -6,11 +6,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from psycopg.rows import dict_row
+
 if TYPE_CHECKING:
     from psycopg import AsyncConnection
     from psycopg.rows import DictRow
     from psycopg_pool import AsyncConnectionPool
 
+from effect_ledger.errors import EffectLedgerInvariantError, EffectStoreError
 from effect_ledger.types import (
     Effect,
     EffectError,
@@ -31,9 +34,25 @@ class PostgresStore:
         self._pool = pool
 
     @asynccontextmanager
+    async def _get_conn(
+        self, tx: AsyncConnection[DictRow] | None
+    ) -> AsyncIterator[AsyncConnection[DictRow]]:
+        if tx is not None:
+            yield tx
+        else:
+            async with self._pool.connection() as conn:
+                yield conn
+
+    @asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncConnection[DictRow]]:
-        async with self._pool.connection() as conn, conn.transaction():
-            yield conn
+        try:
+            async with self._pool.connection() as conn, conn.transaction():
+                yield conn
+        except Exception as err:
+            raise EffectStoreError(
+                f"Transaction failed: {err}",
+                operation="transaction",
+            ) from err
 
     async def find_by_idem_key(
         self,
@@ -41,15 +60,24 @@ class PostgresStore:
         tx: AsyncConnection[DictRow] | None = None,
     ) -> Effect | None:
         query = f"SELECT * FROM {TABLE_NAME} WHERE idem_key = %s LIMIT 1"
-        conn = tx or self._pool
 
-        async with conn.cursor() as cur:
-            await cur.execute(query, (idem_key,))
-            row = await cur.fetchone()
+        try:
+            async with self._get_conn(tx) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query, (idem_key,))
+                    row = await cur.fetchone()
 
-            if row is None:
-                return None
-            return self._row_to_effect(dict(row))
+                    if row is None:
+                        return None
+                    return self._row_to_effect(dict(row))
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to find effect by idem_key: {err}",
+                operation="find_by_idem_key",
+                idem_key=idem_key,
+            ) from err
 
     async def find_by_id(
         self,
@@ -57,16 +85,25 @@ class PostgresStore:
         tx: AsyncConnection[DictRow] | None = None,
     ) -> Effect | None:
         query = f"SELECT * FROM {TABLE_NAME} WHERE id = %s LIMIT 1"
-        conn = tx or self._pool
 
-        async with conn.cursor() as cur:
-            await cur.execute(query, (effect_id,))
-            row = await cur.fetchone()
+        try:
+            async with self._get_conn(tx) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query, (effect_id,))
+                    row = await cur.fetchone()
 
-            if row is None:
-                return None
+                    if row is None:
+                        return None
 
-            return self._row_to_effect(dict(row))
+                    return self._row_to_effect(dict(row))
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to find effect by id: {err}",
+                operation="find_by_id",
+                effect_id=effect_id,
+            ) from err
 
     async def upsert(
         self,
@@ -112,48 +149,59 @@ class PostgresStore:
             RETURNING *, (xmax = 0) AS created
         """
 
-        conn = tx or self._pool
-        async with conn.cursor() as cur:
-            await cur.execute(
-                query,
-                (
-                    effect_id,
-                    input_data.idem_key,
-                    input_data.workflow_id,
-                    input_data.call_id,
-                    input_data.tool,
-                    input_data.status.value,
-                    input_data.args_canonical,
-                    input_data.resource_id_canonical,
-                    json.dumps(input_data.result)
-                    if input_data.result is not None
-                    else None,
-                    json.dumps(
-                        {
-                            "message": input_data.error.message,
-                            "code": input_data.error.code,
-                        }
+        try:
+            async with self._get_conn(tx) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        query,
+                        (
+                            effect_id,
+                            input_data.idem_key,
+                            input_data.workflow_id,
+                            input_data.call_id,
+                            input_data.tool,
+                            input_data.status.value,
+                            input_data.args_canonical,
+                            input_data.resource_id_canonical,
+                            json.dumps(input_data.result)
+                            if input_data.result is not None
+                            else None,
+                            json.dumps(
+                                {
+                                    "message": input_data.error.message,
+                                    "code": input_data.error.code,
+                                }
+                            )
+                            if input_data.error
+                            else None,
+                            now,
+                            now,
+                            now if is_terminal_status(input_data.status) else None,
+                        ),
                     )
-                    if input_data.error
-                    else None,
-                    now,
-                    now,
-                    now if is_terminal_status(input_data.status) else None,
-                ),
-            )
 
-            row = await cur.fetchone()
-            if row is None:
-                raise RuntimeError("Upsert returned no rows")
+                    row = await cur.fetchone()
+                    if row is None:
+                        raise EffectLedgerInvariantError(
+                            "Upsert RETURNING clause returned no rows"
+                        )
 
-            row_dict = dict(row)
-            created = row_dict.pop("created", False)
-            created = created is True or created == "t"
+                    row_dict = dict(row)
+                    created = row_dict.pop("created", False)
+                    created = created is True or created == "t"
 
-            return UpsertEffectResult(
-                effect=self._row_to_effect(row_dict),
-                created=created,
-            )
+                    return UpsertEffectResult(
+                        effect=self._row_to_effect(row_dict),
+                        created=created,
+                    )
+        except (EffectStoreError, EffectLedgerInvariantError):
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to upsert effect: {err}",
+                operation="upsert",
+                idem_key=input_data.idem_key,
+            ) from err
 
     async def transition(
         self,
@@ -166,33 +214,45 @@ class PostgresStore:
     ) -> bool:
         now = datetime.now(tz=timezone.utc)
 
-        # CAS: status must match AND must not be terminal (all in WHERE clause)
         query = f"""
             UPDATE {TABLE_NAME}
             SET status = %s, result = %s, error = %s, updated_at = %s,
                 completed_at = CASE WHEN %s THEN %s ELSE completed_at END
-            WHERE id = %s 
+            WHERE id = %s
               AND status = %s
               AND status NOT IN ('succeeded', 'failed', 'canceled', 'denied')
         """
 
-        conn = tx or self._pool
-        async with conn.cursor() as cur:
-            await cur.execute(
-                query,
-                (
-                    to_status.value,
-                    json.dumps(result) if result is not None else None,
-                    json.dumps(error) if error else None,
-                    now,
-                    is_terminal_status(to_status),
-                    now,
-                    effect_id,
-                    from_status.value,
-                ),
-            )
+        try:
+            async with self._get_conn(tx) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        query,
+                        (
+                            to_status.value,
+                            json.dumps(result) if result is not None else None,
+                            json.dumps(error) if error else None,
+                            now,
+                            is_terminal_status(to_status),
+                            now,
+                            effect_id,
+                            from_status.value,
+                        ),
+                    )
 
-            return bool(cur.rowcount == 1)
+                    return bool(cur.rowcount == 1)
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to transition effect: {err}",
+                operation="transition",
+                effect_id=effect_id,
+                details={
+                    "from_status": from_status.value,
+                    "to_status": to_status.value,
+                },
+            ) from err
 
     async def increment_dedup_count(
         self,
@@ -204,10 +264,19 @@ class PostgresStore:
             SET dedup_count = dedup_count + 1, updated_at = %s
             WHERE idem_key = %s
         """
-        conn = tx or self._pool
 
-        async with conn.cursor() as cur:
-            await cur.execute(query, (datetime.now(tz=timezone.utc), idem_key))
+        try:
+            async with self._get_conn(tx) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query, (datetime.now(tz=timezone.utc), idem_key))
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to increment dedup count: {err}",
+                operation="increment_dedup_count",
+                idem_key=idem_key,
+            ) from err
 
     async def claim_for_processing(
         self,
@@ -217,45 +286,50 @@ class PostgresStore:
         tx: AsyncConnection[DictRow] | None = None,
     ) -> bool:
         now = datetime.now(tz=timezone.utc)
-        conn = tx or self._pool
 
-        if from_status == EffectStatus.PROCESSING and stale_threshold_ms is not None:
-            # Stale claim: only claim if updated_at is older than threshold
-            # Calculate cutoff in Python to avoid SQL interval syntax issues
-            cutoff = now - timedelta(milliseconds=stale_threshold_ms)
+        try:
+            async with self._get_conn(tx) as conn:
+                if (
+                    from_status == EffectStatus.PROCESSING
+                    and stale_threshold_ms is not None
+                ):
+                    cutoff = now - timedelta(milliseconds=stale_threshold_ms)
 
-            query = f"""
-                UPDATE {TABLE_NAME}
-                SET status = 'processing', updated_at = %s
-                WHERE id = %s AND status = 'processing'
-                  AND updated_at < %s
-            """
+                    query = f"""
+                        UPDATE {TABLE_NAME}
+                        SET status = 'processing', updated_at = %s
+                        WHERE id = %s AND status = 'processing'
+                          AND updated_at < %s
+                    """
 
-            async with conn.cursor() as cur:
-                await cur.execute(query, (now, effect_id, cutoff))
-                return bool(cur.rowcount == 1)
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(query, (now, effect_id, cutoff))
+                        return bool(cur.rowcount == 1)
 
-        else:
-            # READY claim: CAS with terminal guard
-            query = f"""
-                UPDATE {TABLE_NAME}
-                SET status = 'processing', updated_at = %s
-                WHERE id = %s AND status = %s
-                  AND status NOT IN ('succeeded', 'failed', 'canceled', 'denied')
-            """
+                else:
+                    query = f"""
+                        UPDATE {TABLE_NAME}
+                        SET status = 'processing', updated_at = %s
+                        WHERE id = %s AND status = %s
+                          AND status NOT IN ('succeeded', 'failed', 'canceled', 'denied')
+                    """
 
-            async with conn.cursor() as cur:
-                await cur.execute(query, (now, effect_id, from_status.value))
-                return bool(cur.rowcount == 1)
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute(query, (now, effect_id, from_status.value))
+                        return bool(cur.rowcount == 1)
+        except EffectStoreError:
+            raise
+        except Exception as err:
+            raise EffectStoreError(
+                f"Failed to claim effect for processing: {err}",
+                operation="claim_for_processing",
+                effect_id=effect_id,
+                details={"from_status": from_status.value},
+            ) from err
 
     def _row_to_effect(self, row: dict[str, Any]) -> Effect:
         error_data = row.get("error")
-        if isinstance(error_data, str):
-            error_data = json.loads(error_data)
-
         result_data = row.get("result")
-        if isinstance(result_data, str):
-            result_data = json.loads(result_data)
 
         return Effect(
             id=row["id"],
