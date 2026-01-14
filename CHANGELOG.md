@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RFC 8785 JSON canonicalization for stable idempotency keys
 - Resource descriptor support for alternative key computation
 - Idempotency key subset selection
-- OpenTelemetry tracing support (optional, via `effect-ledger[otel]`)
+- OpenTelemetry tracing support (optional, via `agent-ledger[otel]`)
 - Structured logging with stdlib logging
 - Input validation with size limits (`max_args_size_bytes`)
 - Comprehensive test suite (47 tests including concurrency scenarios)
@@ -44,6 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial project structure
 - Basic types and store protocol
 
-[Unreleased]: https://github.com/rune0/effect-ledger-py/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/rune0/effect-ledger-py/compare/v0.0.1...v0.1.0
-[0.0.1]: https://github.com/rune0/effect-ledger-py/releases/tag/v0.0.1
+[Unreleased]: https://github.com/rune0/agent-ledger-py/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/rune0/agent-ledger-py/compare/v0.0.1...v0.1.0
+[0.0.1]: https://github.com/rune0/agent-ledger-py/releases/tag/v0.0.1

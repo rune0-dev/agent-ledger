@@ -13,15 +13,15 @@ if TYPE_CHECKING:
     from psycopg.rows import DictRow
     from psycopg_pool import AsyncConnectionPool
 
-from effect_ledger.errors import EffectLedgerInvariantError, EffectStoreError
-from effect_ledger.types import (
+from agent_ledger.errors import EffectLedgerInvariantError, EffectStoreError
+from agent_ledger.types import (
     Effect,
     EffectError,
     EffectStatus,
     UpsertEffectResult,
     is_terminal_status,
 )
-from effect_ledger.utils import generate_id
+from agent_ledger.utils import generate_id
 
 TABLE_NAME = "effects"
 

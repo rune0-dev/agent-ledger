@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
-    from effect_ledger.types import (
+    from agent_ledger.types import (
         Effect,
         EffectStatus,
         JsonValue,

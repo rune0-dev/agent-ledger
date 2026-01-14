@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import pytest
 
-from effect_ledger import EffectLedger, EffectLedgerOptions, EffectStatus, MemoryStore
+from agent_ledger import EffectLedger, EffectLedgerOptions, EffectStatus, MemoryStore
 
 if TYPE_CHECKING:
-    from effect_ledger.types import Effect
+    from agent_ledger.types import Effect
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://postgres:password@0.0.0.0:5432/effect_ledger_test",
+    "postgresql://postgres:password@0.0.0.0:5432/agent_ledger_test",
 )
 
 
@@ -51,7 +51,7 @@ async def postgres_store() -> AsyncIterator[Any]:
     try:
         from psycopg_pool import AsyncConnectionPool
 
-        from effect_ledger.stores.postgres import SCHEMA_SQL, PostgresStore
+        from agent_ledger.stores.postgres import SCHEMA_SQL, PostgresStore
     except ImportError:
         pytest.skip("psycopg not installed")
         return
@@ -80,7 +80,7 @@ async def store(
         try:
             from psycopg_pool import AsyncConnectionPool
 
-            from effect_ledger.stores.postgres import SCHEMA_SQL, PostgresStore
+            from agent_ledger.stores.postgres import SCHEMA_SQL, PostgresStore
         except ImportError:
             pytest.skip("psycopg not installed")
             return

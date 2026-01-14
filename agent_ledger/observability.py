@@ -15,9 +15,9 @@ except ImportError:
     trace = None  # type: ignore[assignment,unused-ignore]
 
 if TYPE_CHECKING:
-    from effect_ledger.types import Effect, EffectStatus
+    from agent_ledger.types import Effect, EffectStatus
 
-_logger = logging.getLogger("effect_ledger")
+_logger = logging.getLogger("agent_ledger")
 _logger.addHandler(logging.NullHandler())
 
 _workflow_id: ContextVar[str | None] = ContextVar("workflow_id", default=None)
@@ -50,7 +50,7 @@ _noop_tracer = _NoOpTracer()
 
 def get_tracer() -> Any:
     if _HAS_OTEL and trace is not None:
-        return trace.get_tracer("effect_ledger")
+        return trace.get_tracer("agent_ledger")
     return _noop_tracer
 
 

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from effect_ledger import (
+from agent_ledger import (
     ConcurrencyOptions,
     EffectDeniedError,
     EffectFailedError,
@@ -23,7 +23,7 @@ from effect_ledger import (
     StaleOptions,
     ToolCall,
 )
-from effect_ledger.types import Effect, UpsertEffectInput
+from agent_ledger.types import Effect, UpsertEffectInput
 
 memory_only = pytest.mark.parametrize("store", ["memory"], indirect=True)
 
@@ -72,7 +72,7 @@ class TestBegin:
         call = make_call()
         begin_result = await ledger.begin(call)
 
-        from effect_ledger import CommitSucceeded
+        from agent_ledger import CommitSucceeded
 
         await ledger.commit(begin_result.effect.id, CommitSucceeded(result="done"))
 
@@ -103,7 +103,7 @@ class TestCommit:
     ) -> None:
         begin_result = await ledger.begin(make_call())
 
-        from effect_ledger import CommitSucceeded
+        from agent_ledger import CommitSucceeded
 
         await ledger.commit(
             begin_result.effect.id,
@@ -120,7 +120,7 @@ class TestCommit:
     ) -> None:
         begin_result = await ledger.begin(make_call())
 
-        from effect_ledger import CommitFailed, EffectError
+        from agent_ledger import CommitFailed, EffectError
 
         await ledger.commit(
             begin_result.effect.id,
@@ -383,7 +383,7 @@ class TestIdempotencyKey:
     async def test_uses_resource_descriptor_when_provided(
         self, ledger: EffectLedger[None]
     ) -> None:
-        from effect_ledger import ResourceDescriptor
+        from agent_ledger import ResourceDescriptor
 
         call1 = make_call(
             resource=ResourceDescriptor(
@@ -1022,7 +1022,7 @@ class TestConcurrency:
         self, store: MemoryStore
     ) -> None:
         """If effect disappears mid-wait, should raise invariant error."""
-        from effect_ledger.errors import EffectLedgerInvariantError
+        from agent_ledger.errors import EffectLedgerInvariantError
 
         ledger = EffectLedger(EffectLedgerOptions(store=store))
         call = make_call(args={"disappear": "during_wait"})

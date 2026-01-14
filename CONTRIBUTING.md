@@ -1,6 +1,6 @@
-# Contributing to effect-ledger
+# Contributing to agent-ledger
 
-Thank you for your interest in contributing to effect-ledger!
+Thank you for your interest in contributing to agent-ledger!
 
 ## Development Setup
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to effect-ledger!
 
 ```bash
 # Clone the repository
-git clone https://github.com/rune0/effect-ledger-py.git
-cd effect-ledger-py
+git clone https://github.com/rune0/agent-ledger-py.git
+cd agent-ledger-py
 
 # Create virtual environment and install dependencies
 python -m venv .venv
@@ -25,9 +25,9 @@ pip install -e ".[dev]"
 pytest
 
 # Run all checks
-ruff check effect_ledger/ tests/
-ruff format --check effect_ledger/ tests/
-mypy effect_ledger/
+ruff check agent_ledger/ tests/
+ruff format --check agent_ledger/ tests/
+mypy agent_ledger/
 ```
 
 ### Using Hatch (Alternative)
@@ -49,13 +49,13 @@ We use [Ruff](https://docs.astral.sh/ruff/) for linting and formatting:
 
 ```bash
 # Lint
-ruff check effect_ledger/ tests/
+ruff check agent_ledger/ tests/
 
 # Auto-fix lint issues
-ruff check effect_ledger/ tests/ --fix
+ruff check agent_ledger/ tests/ --fix
 
 # Format
-ruff format effect_ledger/ tests/
+ruff format agent_ledger/ tests/
 ```
 
 ### Type Checking
@@ -63,7 +63,7 @@ ruff format effect_ledger/ tests/
 We use strict mypy configuration:
 
 ```bash
-mypy effect_ledger/
+mypy agent_ledger/
 ```
 
 All code must pass type checking with no errors.
@@ -75,7 +75,7 @@ All code must pass type checking with no errors.
 pytest
 
 # Run with coverage
-pytest --cov=effect_ledger --cov-report=term-missing
+pytest --cov=agent_ledger --cov-report=term-missing
 
 # Run specific test
 pytest tests/test_ledger.py::TestRun::test_executes_handler_and_commits_success
@@ -118,7 +118,7 @@ test: add concurrency tests for stale takeover
 ## Architecture Overview
 
 ```
-effect_ledger/
+agent_ledger/
 ├── __init__.py      # Public API exports
 ├── types.py         # Core types (Effect, ToolCall, Status, etc.)
 ├── errors.py        # Exception types

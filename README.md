@@ -1,25 +1,25 @@
-# effect-ledger
+# agent-ledger
 
 Idempotency and audit ledger for AI agent tool calls.
 
-[![PyPI version](https://badge.fury.io/py/effect-ledger.svg)](https://badge.fury.io/py/effect-ledger)
+[![PyPI version](https://badge.fury.io/py/agent-ledger.svg)](https://badge.fury.io/py/agent-ledger)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Installation
 
 ```bash
-pip install effect-ledger
+pip install agent-ledger
 
 # With PostgreSQL support
-pip install effect-ledger[postgres]
+pip install agent-ledger[postgres]
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from effect_ledger import EffectLedger, EffectLedgerOptions, MemoryStore, ToolCall
+from agent_ledger import EffectLedger, EffectLedgerOptions, MemoryStore, ToolCall
 
 async def main():
     store = MemoryStore()
@@ -121,7 +121,7 @@ result = await ledger.run(
 ### With Approval Flow
 
 ```python
-from effect_ledger import RunOptions
+from agent_ledger import RunOptions
 
 result = await ledger.run(
     ToolCall(
@@ -164,7 +164,7 @@ except Exception as e:
 
 ```python
 from psycopg_pool import AsyncConnectionPool
-from effect_ledger.stores.postgres import PostgresStore, SCHEMA_SQL
+from agent_ledger.stores.postgres import PostgresStore, SCHEMA_SQL
 
 async def setup():
     pool = AsyncConnectionPool(conninfo="postgresql://localhost/mydb")

@@ -1,6 +1,6 @@
 import asyncio
 
-from effect_ledger import (
+from agent_ledger import (
     EffectLedger,
     EffectLedgerOptions,
     MemoryStore,

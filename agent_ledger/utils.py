@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import rfc8785
 
-from effect_ledger.errors import EffectLedgerValidationError
+from agent_ledger.errors import EffectLedgerValidationError
 
 if TYPE_CHECKING:
-    from effect_ledger.types import ResourceDescriptor, ToolCall
+    from agent_ledger.types import ResourceDescriptor, ToolCall
 
 DEFAULT_MAX_ARGS_SIZE_BYTES = 1024 * 1024  # 1MB
 

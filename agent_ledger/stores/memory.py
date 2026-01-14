@@ -8,18 +8,18 @@ from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 
-from effect_ledger.errors import EffectStoreError
-from effect_ledger.types import (
+from agent_ledger.errors import EffectStoreError
+from agent_ledger.types import (
     Effect,
     EffectError,
     EffectStatus,
     UpsertEffectResult,
     is_terminal_status,
 )
-from effect_ledger.utils import generate_id
+from agent_ledger.utils import generate_id
 
 if TYPE_CHECKING:
-    from effect_ledger.types import JsonValue, UpsertEffectInput
+    from agent_ledger.types import JsonValue, UpsertEffectInput
 
 DEFAULT_MAX_SIZE = 10_000
 DEFAULT_TTL_SECONDS = 60 * 60

@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from effect_ledger.errors import (
+from agent_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
     EffectLedgerInvariantError,
     EffectTimeoutError,
 )
-from effect_ledger.observability import (
+from agent_ledger.observability import (
     clear_context,
     get_tracer,
     log_effect_created,
@@ -23,7 +23,7 @@ from effect_ledger.observability import (
     log_wait_timeout,
     set_context,
 )
-from effect_ledger.types import (
+from agent_ledger.types import (
     BeginResult,
     CommitOutcome,
     CommitSucceeded,
@@ -37,7 +37,7 @@ from effect_ledger.types import (
     UpsertEffectInput,
     is_terminal_status,
 )
-from effect_ledger.utils import (
+from agent_ledger.utils import (
     compute_idem_key,
     generate_id,
     resource_id_canonical,
@@ -45,7 +45,7 @@ from effect_ledger.utils import (
 )
 
 if TYPE_CHECKING:
-    from effect_ledger.stores.base import EffectStore
+    from agent_ledger.stores.base import EffectStore
 
 TxT = TypeVar("TxT")
 
@@ -168,7 +168,7 @@ class EffectLedger(Generic[TxT]):
     ) -> BeginResult:
         tracer = get_tracer()
         with tracer.start_as_current_span(
-            "effect_ledger.begin",
+            "agent_ledger.begin",
             attributes={"tool": call.tool, "workflow_id": call.workflow_id},
         ) as span:
             idem_key = compute_idem_key(call)
@@ -232,7 +232,7 @@ class EffectLedger(Generic[TxT]):
         )
 
         with tracer.start_as_current_span(
-            "effect_ledger.commit",
+            "agent_ledger.commit",
             attributes={"effect_id": effect_id, "to_status": to_status.value},
         ):
             if isinstance(outcome, CommitSucceeded):
@@ -270,7 +270,7 @@ class EffectLedger(Generic[TxT]):
     ) -> Effect:
         tracer = get_tracer()
         with tracer.start_as_current_span(
-            "effect_ledger.wait_for_terminal",
+            "agent_ledger.wait_for_terminal",
             attributes={
                 "idem_key": idem_key,
                 "timeout_ms": opts.concurrency.wait_timeout_ms,
@@ -336,7 +336,7 @@ class EffectLedger(Generic[TxT]):
 
         try:
             with tracer.start_as_current_span(
-                "effect_ledger.run",
+                "agent_ledger.run",
                 attributes={
                     "tool": call.tool,
                     "workflow_id": call.workflow_id,

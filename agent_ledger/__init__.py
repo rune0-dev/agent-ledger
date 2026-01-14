@@ -1,4 +1,4 @@
-from effect_ledger.errors import (
+from agent_ledger.errors import (
     EffectDeniedError,
     EffectFailedError,
     EffectLedgerError,
@@ -7,10 +7,10 @@ from effect_ledger.errors import (
     EffectStoreError,
     EffectTimeoutError,
 )
-from effect_ledger.ledger import EffectLedger, EffectLedgerOptions
-from effect_ledger.observability import get_logger, get_tracer
-from effect_ledger.stores import EffectStore, MemoryStore
-from effect_ledger.types import (
+from agent_ledger.ledger import EffectLedger, EffectLedgerOptions
+from agent_ledger.observability import get_logger, get_tracer
+from agent_ledger.stores import EffectStore, MemoryStore
+from agent_ledger.types import (
     AWAITING_STATUSES,
     TERMINAL_STATUSES,
     BeginResult,
@@ -33,7 +33,7 @@ from effect_ledger.types import (
     is_awaiting_status,
     is_terminal_status,
 )
-from effect_ledger.utils import (
+from agent_ledger.utils import (
     canonicalize,
     compute_idem_key,
     generate_id,
