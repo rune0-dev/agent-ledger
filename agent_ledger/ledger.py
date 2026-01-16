@@ -66,70 +66,79 @@ class MergedOptions:
     stale: StaleOptions
 
 
+def _coalesce(*values: Any) -> Any:
+    """Return first non-None value, or None if all are None."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _get_concurrency_field(
+    per_call: RunOptions | None,
+    instance_defaults: RunOptions | None,
+    field: str,
+    default: Any,
+) -> Any:
+    """Get a concurrency option field with proper None handling."""
+    per_call_val = (
+        getattr(per_call.concurrency, field, None)
+        if per_call and per_call.concurrency
+        else None
+    )
+    defaults_val = (
+        getattr(instance_defaults.concurrency, field, None)
+        if instance_defaults and instance_defaults.concurrency
+        else None
+    )
+    return _coalesce(per_call_val, defaults_val, default)
+
+
 def _merge_options(
     instance_defaults: RunOptions | None,
     per_call: RunOptions | None,
 ) -> MergedOptions:
     concurrency = ConcurrencyOptions(
-        wait_timeout_ms=(
-            per_call and per_call.concurrency and per_call.concurrency.wait_timeout_ms
-        )
-        or (
-            instance_defaults
-            and instance_defaults.concurrency
-            and instance_defaults.concurrency.wait_timeout_ms
-        )
-        or DEFAULT_CONCURRENCY.wait_timeout_ms,
-        initial_interval_ms=(
-            per_call
-            and per_call.concurrency
-            and per_call.concurrency.initial_interval_ms
-        )
-        or (
-            instance_defaults
-            and instance_defaults.concurrency
-            and instance_defaults.concurrency.initial_interval_ms
-        )
-        or DEFAULT_CONCURRENCY.initial_interval_ms,
-        max_interval_ms=(
-            per_call and per_call.concurrency and per_call.concurrency.max_interval_ms
-        )
-        or (
-            instance_defaults
-            and instance_defaults.concurrency
-            and instance_defaults.concurrency.max_interval_ms
-        )
-        or DEFAULT_CONCURRENCY.max_interval_ms,
-        backoff_multiplier=(
-            per_call
-            and per_call.concurrency
-            and per_call.concurrency.backoff_multiplier
-        )
-        or (
-            instance_defaults
-            and instance_defaults.concurrency
-            and instance_defaults.concurrency.backoff_multiplier
-        )
-        or DEFAULT_CONCURRENCY.backoff_multiplier,
-        jitter_factor=(
-            per_call and per_call.concurrency and per_call.concurrency.jitter_factor
-        )
-        or (
-            instance_defaults
-            and instance_defaults.concurrency
-            and instance_defaults.concurrency.jitter_factor
-        )
-        or DEFAULT_CONCURRENCY.jitter_factor,
+        wait_timeout_ms=_get_concurrency_field(
+            per_call,
+            instance_defaults,
+            "wait_timeout_ms",
+            DEFAULT_CONCURRENCY.wait_timeout_ms,
+        ),
+        initial_interval_ms=_get_concurrency_field(
+            per_call,
+            instance_defaults,
+            "initial_interval_ms",
+            DEFAULT_CONCURRENCY.initial_interval_ms,
+        ),
+        max_interval_ms=_get_concurrency_field(
+            per_call,
+            instance_defaults,
+            "max_interval_ms",
+            DEFAULT_CONCURRENCY.max_interval_ms,
+        ),
+        backoff_multiplier=_get_concurrency_field(
+            per_call,
+            instance_defaults,
+            "backoff_multiplier",
+            DEFAULT_CONCURRENCY.backoff_multiplier,
+        ),
+        jitter_factor=_get_concurrency_field(
+            per_call,
+            instance_defaults,
+            "jitter_factor",
+            DEFAULT_CONCURRENCY.jitter_factor,
+        ),
     )
 
+    per_call_stale = per_call.stale.after_ms if per_call and per_call.stale else None
+    defaults_stale = (
+        instance_defaults.stale.after_ms
+        if instance_defaults and instance_defaults.stale
+        else None
+    )
     stale = StaleOptions(
-        after_ms=(per_call and per_call.stale and per_call.stale.after_ms)
-        or (
-            instance_defaults
-            and instance_defaults.stale
-            and instance_defaults.stale.after_ms
-        )
-        or DEFAULT_STALE.after_ms,
+        after_ms=_coalesce(per_call_stale, defaults_stale, DEFAULT_STALE.after_ms),
     )
 
     return MergedOptions(concurrency=concurrency, stale=stale)
@@ -276,9 +285,8 @@ class EffectLedger(Generic[TxT]):
                 "timeout_ms": opts.concurrency.wait_timeout_ms,
             },
         ) as span:
-            deadline = asyncio.get_event_loop().time() + (
-                opts.concurrency.wait_timeout_ms / 1000
-            )
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + (opts.concurrency.wait_timeout_ms / 1000)
 
             interval = opts.concurrency.initial_interval_ms
             poll_count = 0
@@ -308,7 +316,7 @@ class EffectLedger(Generic[TxT]):
 
                     return effect
 
-                if asyncio.get_event_loop().time() >= deadline:
+                if loop.time() >= deadline:
                     span.set_attribute("poll_count", poll_count)
                     span.set_attribute("timed_out", True)
                     log_wait_timeout(idem_key, opts.concurrency.wait_timeout_ms)
@@ -348,8 +356,16 @@ class EffectLedger(Generic[TxT]):
                     run_options,
                 )
 
-                requires_approval = (
-                    run_options.requires_approval if run_options else False
+                per_call_approval = (
+                    run_options.requires_approval if run_options else None
+                )
+                defaults_approval = (
+                    self._defaults.run.requires_approval
+                    if self._defaults and self._defaults.run
+                    else None
+                )
+                requires_approval = _coalesce(
+                    per_call_approval, defaults_approval, False
                 )
 
                 begin_result = await self.begin(call, tx)

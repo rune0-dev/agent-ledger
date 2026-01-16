@@ -49,11 +49,12 @@ class MemoryStore:
         tx: None = None,
     ) -> Effect | None:
         try:
-            effect_id = self._idem_key_to_id.get(idem_key)
-            if effect_id is None:
-                return None
-            result: Effect | None = self._cache.get(effect_id)
-            return result
+            async with self._lock:
+                effect_id = self._idem_key_to_id.get(idem_key)
+                if effect_id is None:
+                    return None
+                result: Effect | None = self._cache.get(effect_id)
+                return result
         except EffectStoreError:
             raise
         except Exception as err:
@@ -69,8 +70,9 @@ class MemoryStore:
         tx: None = None,
     ) -> Effect | None:
         try:
-            result: Effect | None = self._cache.get(effect_id)
-            return result
+            async with self._lock:
+                result: Effect | None = self._cache.get(effect_id)
+                return result
         except EffectStoreError:
             raise
         except Exception as err:
@@ -297,7 +299,8 @@ class MemoryStore:
         self._idem_key_to_id.clear()
 
     async def list_effects(self) -> list[Effect]:
-        return list(self._cache.values())
+        async with self._lock:
+            return list(self._cache.values())
 
     @property
     def size(self) -> int:

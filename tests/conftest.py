@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://postgres:password@0.0.0.0:5432/agent_ledger_test",
+    "postgresql://postgres:password@0.0.0.0:5432/effect_ledger_test",
 )
 
 

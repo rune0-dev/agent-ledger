@@ -138,7 +138,7 @@ async def main() -> None:
     print("=== Summary ===")
     print(f"Total effects stored: {store.size}")
     print("\nEffects in ledger:")
-    for effect in store.list_effects():
+    for effect in await store.list_effects():
         print(
             f"  - {effect.tool} [{effect.status.value}] dedup_count={effect.dedup_count}"
         )
