@@ -737,7 +737,7 @@ class TestConcurrency:
     async def test_stale_takeover_returns_winner_result(
         self, store: MemoryStore
     ) -> None:
-        stale_options = RunOptions(stale=StaleOptions(after_ms=50))
+        stale_options = RunOptions(stale=StaleOptions(after_ms=1000))
         ledger = EffectLedger(EffectLedgerOptions(store=store))
         call = make_call(args={"stale": "takeover"})
 
@@ -761,7 +761,7 @@ class TestConcurrency:
         assert len(effects) == 1
         effect = effects[0]
 
-        old_time = datetime.now(tz=timezone.utc) - timedelta(milliseconds=100)
+        old_time = datetime.now(tz=timezone.utc) - timedelta(milliseconds=1500)
         aged_effect = Effect(
             id=effect.id,
             idem_key=effect.idem_key,
@@ -855,14 +855,14 @@ class TestConcurrency:
     async def test_multiple_stale_takeover_only_one_executes(
         self, store: MemoryStore
     ) -> None:
-        stale_options = RunOptions(stale=StaleOptions(after_ms=50))
+        stale_options = RunOptions(stale=StaleOptions(after_ms=1000))
         ledger = EffectLedger(EffectLedgerOptions(store=store))
         call = make_call(args={"multi_stale": "race"})
 
         begin_result = await ledger.begin(call)
         effect = begin_result.effect
 
-        old_time = datetime.now(tz=timezone.utc) - timedelta(milliseconds=100)
+        old_time = datetime.now(tz=timezone.utc) - timedelta(milliseconds=1500)
         aged_effect = Effect(
             id=effect.id,
             idem_key=effect.idem_key,

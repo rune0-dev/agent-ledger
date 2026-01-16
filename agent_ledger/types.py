@@ -34,6 +34,28 @@ AWAITING_STATUSES: frozenset[EffectStatus] = frozenset(
     }
 )
 
+ALLOWED_TRANSITIONS: dict[EffectStatus, frozenset[EffectStatus]] = {
+    EffectStatus.PROCESSING: frozenset(
+        {
+            EffectStatus.SUCCEEDED,
+            EffectStatus.FAILED,
+            EffectStatus.REQUIRES_APPROVAL,
+        }
+    ),
+    EffectStatus.REQUIRES_APPROVAL: frozenset(
+        {
+            EffectStatus.READY,
+            EffectStatus.DENIED,
+            EffectStatus.CANCELED,
+        }
+    ),
+    EffectStatus.READY: frozenset(
+        {
+            EffectStatus.PROCESSING,
+        }
+    ),
+}
+
 
 def is_terminal_status(status: EffectStatus) -> bool:
     return status in TERMINAL_STATUSES
@@ -41,6 +63,15 @@ def is_terminal_status(status: EffectStatus) -> bool:
 
 def is_awaiting_status(status: EffectStatus) -> bool:
     return status in AWAITING_STATUSES
+
+
+def is_valid_transition(from_status: EffectStatus, to_status: EffectStatus) -> bool:
+    if from_status in TERMINAL_STATUSES:
+        return False
+    allowed = ALLOWED_TRANSITIONS.get(from_status)
+    if allowed is None:
+        return False
+    return to_status in allowed
 
 
 IdempotencyStatus = Literal["fresh", "replayed"]

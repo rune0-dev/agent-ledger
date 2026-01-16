@@ -15,6 +15,7 @@ from agent_ledger.types import (
     EffectStatus,
     UpsertEffectResult,
     is_terminal_status,
+    is_valid_transition,
 )
 from agent_ledger.utils import generate_id
 
@@ -147,7 +148,7 @@ class MemoryStore:
                 if effect.status != from_status:
                     return False
 
-                if is_terminal_status(effect.status):
+                if not is_valid_transition(from_status, to_status):
                     return False
 
                 now = datetime.now(tz=timezone.utc)

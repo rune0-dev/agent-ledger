@@ -11,6 +11,7 @@ from agent_ledger.ledger import EffectLedger, EffectLedgerOptions
 from agent_ledger.observability import get_logger, get_tracer
 from agent_ledger.stores import EffectStore, MemoryStore
 from agent_ledger.types import (
+    ALLOWED_TRANSITIONS,
     AWAITING_STATUSES,
     TERMINAL_STATUSES,
     BeginResult,
@@ -32,6 +33,7 @@ from agent_ledger.types import (
     UpsertEffectResult,
     is_awaiting_status,
     is_terminal_status,
+    is_valid_transition,
 )
 from agent_ledger.utils import (
     canonicalize,
@@ -42,6 +44,7 @@ from agent_ledger.utils import (
 )
 
 __all__ = [
+    "ALLOWED_TRANSITIONS",
     "AWAITING_STATUSES",
     "TERMINAL_STATUSES",
     "BeginResult",
@@ -79,6 +82,7 @@ __all__ = [
     "get_tracer",
     "is_awaiting_status",
     "is_terminal_status",
+    "is_valid_transition",
     "resource_id_canonical",
     "validate_args",
 ]

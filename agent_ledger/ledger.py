@@ -59,6 +59,8 @@ DEFAULT_CONCURRENCY = ConcurrencyOptions(
 
 DEFAULT_STALE = StaleOptions(after_ms=0)
 
+MIN_STALE_THRESHOLD_MS = 1000
+
 
 @dataclass(frozen=True, slots=True)
 class MergedOptions:
@@ -153,8 +155,9 @@ def _compute_next_interval(current_interval: int, opts: ConcurrencyOptions) -> i
 def _is_effect_stale(effect: Effect, stale_after_ms: int) -> bool:
     if stale_after_ms <= 0:
         return False
+    effective_threshold = max(stale_after_ms, MIN_STALE_THRESHOLD_MS)
     age_ms = (datetime.now(tz=timezone.utc) - effect.updated_at).total_seconds() * 1000
-    return age_ms > stale_after_ms
+    return age_ms > effective_threshold
 
 
 @dataclass
@@ -176,6 +179,9 @@ class EffectLedger(Generic[TxT]):
         tx: TxT | None = None,
     ) -> BeginResult:
         tracer = get_tracer()
+
+        args_canonical = validate_args(call.args, self._max_args_size_bytes)
+
         with tracer.start_as_current_span(
             "agent_ledger.begin",
             attributes={"tool": call.tool, "workflow_id": call.workflow_id},
@@ -185,7 +191,6 @@ class EffectLedger(Generic[TxT]):
             resource_canonical = (
                 resource_id_canonical(call.resource) if call.resource else call.tool
             )
-            args_canonical = validate_args(call.args, self._max_args_size_bytes)
 
             span.set_attribute("idem_key", idem_key)
 
@@ -306,10 +311,14 @@ class EffectLedger(Generic[TxT]):
                         effect.error.message if effect.error else None,
                     )
 
+                is_stale_processing = (
+                    effect.status == EffectStatus.PROCESSING
+                    and _is_effect_stale(effect, opts.stale.after_ms)
+                )
                 if (
                     is_terminal_status(effect.status)
                     or effect.status == EffectStatus.READY
-                    or _is_effect_stale(effect, opts.stale.after_ms)
+                    or is_stale_processing
                 ):
                     span.set_attribute("poll_count", poll_count)
                     span.set_attribute("resolved_status", effect.status.value)
@@ -334,6 +343,8 @@ class EffectLedger(Generic[TxT]):
         run_options: RunOptions | None = None,
     ) -> Any:
         tracer = get_tracer()
+
+        validate_args(call.args, self._max_args_size_bytes)
         idem_key = compute_idem_key(call)
 
         set_context(
@@ -546,7 +557,13 @@ class EffectLedger(Generic[TxT]):
                 effect, EffectStatus.READY, handler, merged, tx
             )
 
-        if _is_effect_stale(effect, merged.stale.after_ms):
+        if effect.status == EffectStatus.REQUIRES_APPROVAL:
+            resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
+            return await self._handle_resolved_effect(resolved, handler, merged, tx)
+
+        if effect.status == EffectStatus.PROCESSING and _is_effect_stale(
+            effect, merged.stale.after_ms
+        ):
             return await self._claim_and_execute(
                 effect,
                 EffectStatus.PROCESSING,
@@ -556,7 +573,6 @@ class EffectLedger(Generic[TxT]):
                 stale_threshold_ms=merged.stale.after_ms,
             )
 
-        # PROCESSING but not stale - wait for the other worker to finish
         if effect.status == EffectStatus.PROCESSING:
             resolved = await self._wait_for_terminal(effect.idem_key, merged, tx)
             return await self._handle_resolved_effect(resolved, handler, merged, tx)
