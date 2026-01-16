@@ -1263,6 +1263,7 @@ class TestValidation:
 class TestErrorHandling:
     async def test_store_error_wraps_backend_exceptions(self) -> None:
         store = MemoryStore()
+        store._id_to_idem_key["some-id"] = "some-idem-key"
 
         with (
             patch.object(
@@ -1294,6 +1295,7 @@ class TestErrorHandling:
 
     async def test_store_error_not_double_wrapped(self) -> None:
         store = MemoryStore()
+        store._id_to_idem_key["some-id"] = "some-idem-key"
 
         original_store_error = EffectStoreError(
             "Already wrapped",

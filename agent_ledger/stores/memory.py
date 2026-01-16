@@ -28,16 +28,24 @@ STALE_THRESHOLD_MS = 60_000
 
 
 class MemoryStore:
+    """In-memory effect store with TTL-based eviction.
+
+    Uses a single cache keyed by idem_key (not effect_id) to avoid
+    index synchronization issues when TTLCache evicts entries.
+    """
+
     def __init__(
         self,
         max_size: int = DEFAULT_MAX_SIZE,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
     ) -> None:
+        # Single cache keyed by idem_key - eliminates dual-index sync issues
         self._cache: TTLCache[str, Effect] = TTLCache(
             maxsize=max_size,
             ttl=ttl_seconds,
         )
-        self._idem_key_to_id: dict[str, str] = {}
+        # Secondary index for id -> idem_key lookups (cleaned on access)
+        self._id_to_idem_key: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @asynccontextmanager
@@ -51,10 +59,7 @@ class MemoryStore:
     ) -> Effect | None:
         try:
             async with self._lock:
-                effect_id = self._idem_key_to_id.get(idem_key)
-                if effect_id is None:
-                    return None
-                result: Effect | None = self._cache.get(effect_id)
+                result: Effect | None = self._cache.get(idem_key)
                 return result
         except EffectStoreError:
             raise
@@ -72,7 +77,12 @@ class MemoryStore:
     ) -> Effect | None:
         try:
             async with self._lock:
-                result: Effect | None = self._cache.get(effect_id)
+                idem_key = self._id_to_idem_key.get(effect_id)
+                if idem_key is None:
+                    return None
+                result: Effect | None = self._cache.get(idem_key)
+                if result is None:
+                    del self._id_to_idem_key[effect_id]
                 return result
         except EffectStoreError:
             raise
@@ -90,8 +100,7 @@ class MemoryStore:
     ) -> UpsertEffectResult:
         try:
             async with self._lock:
-                existing_id = self._idem_key_to_id.get(input_data.idem_key)
-                existing = self._cache.get(existing_id) if existing_id else None
+                existing = self._cache.get(input_data.idem_key)
 
                 if existing is not None:
                     return UpsertEffectResult(effect=existing, created=False)
@@ -116,8 +125,8 @@ class MemoryStore:
                     completed_at=now if is_terminal_status(input_data.status) else None,
                 )
 
-                self._cache[effect_id] = effect
-                self._idem_key_to_id[input_data.idem_key] = effect_id
+                self._cache[input_data.idem_key] = effect
+                self._id_to_idem_key[effect_id] = input_data.idem_key
 
                 return UpsertEffectResult(effect=effect, created=True)
         except EffectStoreError:
@@ -140,9 +149,13 @@ class MemoryStore:
     ) -> bool:
         try:
             async with self._lock:
-                effect = self._cache.get(effect_id)
+                idem_key = self._id_to_idem_key.get(effect_id)
+                if idem_key is None:
+                    return False
 
+                effect = self._cache.get(idem_key)
                 if effect is None:
+                    del self._id_to_idem_key[effect_id]
                     return False
 
                 if effect.status != from_status:
@@ -180,7 +193,7 @@ class MemoryStore:
                     else effect.completed_at,
                 )
 
-                self._cache[effect_id] = updated
+                self._cache[idem_key] = updated
                 return True
         except EffectStoreError:
             raise
@@ -202,11 +215,7 @@ class MemoryStore:
     ) -> None:
         try:
             async with self._lock:
-                effect_id = self._idem_key_to_id.get(idem_key)
-                if effect_id is None:
-                    return
-
-                effect = self._cache.get(effect_id)
+                effect = self._cache.get(idem_key)
                 if effect is None:
                     return
 
@@ -227,7 +236,7 @@ class MemoryStore:
                     updated_at=now,
                     completed_at=effect.completed_at,
                 )
-                self._cache[effect_id] = updated
+                self._cache[idem_key] = updated
         except EffectStoreError:
             raise
         except Exception as err:
@@ -246,8 +255,13 @@ class MemoryStore:
     ) -> bool:
         try:
             async with self._lock:
-                effect = self._cache.get(effect_id)
+                idem_key = self._id_to_idem_key.get(effect_id)
+                if idem_key is None:
+                    return False
+
+                effect = self._cache.get(idem_key)
                 if effect is None:
+                    del self._id_to_idem_key[effect_id]
                     return False
 
                 now = datetime.now(tz=timezone.utc)
@@ -283,7 +297,7 @@ class MemoryStore:
                     updated_at=now,
                     completed_at=effect.completed_at,
                 )
-                self._cache[effect_id] = updated
+                self._cache[idem_key] = updated
                 return True
         except EffectStoreError:
             raise
@@ -297,7 +311,7 @@ class MemoryStore:
 
     def clear(self) -> None:
         self._cache.clear()
-        self._idem_key_to_id.clear()
+        self._id_to_idem_key.clear()
 
     async def list_effects(self) -> list[Effect]:
         async with self._lock:

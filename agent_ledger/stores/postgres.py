@@ -26,6 +26,11 @@ from agent_ledger.utils import generate_id
 
 TABLE_NAME = "effects"
 
+IMMUTABLE_STATUSES = (
+    "('succeeded', 'failed', 'canceled', 'denied', 'requires_approval', 'ready')"
+)
+TERMINAL_STATUSES = "('succeeded', 'failed', 'canceled', 'denied')"
+
 
 class PostgresStore:
     def __init__(
@@ -125,29 +130,29 @@ class PostgresStore:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
             ON CONFLICT (idem_key) DO UPDATE SET
               status = CASE
-                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied', 'requires_approval', 'ready')
+                WHEN {TABLE_NAME}.status IN {IMMUTABLE_STATUSES}
                 THEN {TABLE_NAME}.status
                 ELSE EXCLUDED.status
               END,
               result = CASE
-                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied', 'requires_approval', 'ready')
+                WHEN {TABLE_NAME}.status IN {IMMUTABLE_STATUSES}
                 THEN {TABLE_NAME}.result
                 ELSE EXCLUDED.result
               END,
               error = CASE
-                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied', 'requires_approval', 'ready')
+                WHEN {TABLE_NAME}.status IN {IMMUTABLE_STATUSES}
                 THEN {TABLE_NAME}.error
                 ELSE EXCLUDED.error
               END,
               updated_at = CASE
-                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied', 'requires_approval', 'ready')
+                WHEN {TABLE_NAME}.status IN {IMMUTABLE_STATUSES}
                 THEN {TABLE_NAME}.updated_at
                 ELSE EXCLUDED.updated_at
               END,
               completed_at = CASE
-                WHEN {TABLE_NAME}.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                WHEN {TABLE_NAME}.status IN {TERMINAL_STATUSES}
                 THEN {TABLE_NAME}.completed_at
-                WHEN EXCLUDED.status IN ('succeeded', 'failed', 'canceled', 'denied')
+                WHEN EXCLUDED.status IN {TERMINAL_STATUSES}
                 THEN EXCLUDED.updated_at
                 ELSE {TABLE_NAME}.completed_at
               END
@@ -230,7 +235,7 @@ class PostgresStore:
                 completed_at = CASE WHEN %s THEN %s ELSE completed_at END
             WHERE id = %s
               AND status = %s
-              AND status NOT IN ('succeeded', 'failed', 'canceled', 'denied')
+              AND status NOT IN {TERMINAL_STATUSES}
         """
 
         try:
@@ -325,7 +330,7 @@ class PostgresStore:
                         UPDATE {TABLE_NAME}
                         SET status = 'processing', updated_at = %s
                         WHERE id = %s AND status = %s
-                          AND status NOT IN ('succeeded', 'failed', 'canceled', 'denied')
+                          AND status NOT IN {TERMINAL_STATUSES}
                     """
 
                     async with conn.cursor(row_factory=dict_row) as cur:
