@@ -1,6 +1,6 @@
 [project]
 name = "agent-ledger"
-version = "0.1.0"
+version = "0.1.1"
 description = "Idempotency and audit ledger for AI agent tool calls"
 readme = "README.md"
 license = "Apache-2.0"
