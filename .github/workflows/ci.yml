@@ -3,8 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
 
@@ -115,20 +113,45 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  release:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [build]
-    if: startsWith(github.ref, 'refs/tags/v')
-    environment:
-      name: pypi
-      url: https://pypi.org/project/agent-ledger/
+    environment: pypi
     permissions:
+      contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: version
+        run: |
+          OLD=$(git show HEAD~1:pyproject.toml 2>/dev/null | grep '^version' | cut -d'"' -f2 || echo "0.0.0")
+          NEW=$(grep '^version' pyproject.toml | cut -d'"' -f2)
+          echo "old=$OLD" >> $GITHUB_OUTPUT
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          if [ "$OLD" != "$NEW" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
       - uses: actions/download-artifact@v4
+        if: steps.version.outputs.changed == 'true'
         with:
           name: dist
           path: dist/
 
       - name: Publish to PyPI
+        if: steps.version.outputs.changed == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.new }}
+          name: v${{ steps.version.outputs.new }}
+          generate_release_notes: true
+          files: dist/*
