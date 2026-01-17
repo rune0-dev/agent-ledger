@@ -3,7 +3,7 @@
 [![Pixel fonts](https://see.fontimg.com/api/rf5/BLAPB/YWMxYTMyY2I3MjZmNDUzN2JiZTFiODBiM2E4NjhiNGMudHRm/cnVuZTA/bitrimus.png?r=fs&h=77&w=1000&fg=000000&bg=FFFFFF&tb=1&s=77)](https://www.fontspace.com/category/pixel)
 
 <h3>
-AI agents retry. Side effects shouldn't.
+AI agents retry. Tool calls shouldn't.
 </h3>
 
 </div>
@@ -12,10 +12,10 @@ AI agents retry. Side effects shouldn't.
 
 <div align="center">
 
-Idempotent tool execution for AI agents (crash-safe, multi-worker).
-Human sign-off locked to the exact tool + args (no "approve $10, run $10k").
+Idempotent tool execution for AI agents (Postgres for crash recovery + multi-worker).<br/>
+Human sign-off locked to the exact tool call + args (no "approve X, run Y").
 
-*Prevent duplicate charges. Require approval for sensitive deploys. Recorded history you can query.*
+*Idempotent tool calls. First-class human approval gates. Queriable recorded execution history.*
 
 **Works with any async Python tool executor.** Examples: [LangGraph](examples/) / [LangChain](examples/). (more coming)
 
@@ -107,13 +107,21 @@ When an agent crashes or retries, it doesn't remember what it already did. A tim
 
 ## The "Pause Button" for Your Agent (Human-in-the-loop)
 
-High-stakes operations can require human approval before execution:
+High-stakes operations can require human approval before execution (example of a Slack message as approval request integration):
 
 ```python
 from agent_ledger import RunOptions, LedgerHooks
+import json
 
-async def notify_slack(effect):
-    await slack.post(f"Approve {effect.tool}? Key: {effect.idem_key}")
+# Agent side: request approval and wait
+async def notify_slack_approval_hook(effect):
+    """Hook fires once when approval is required."""
+    await slack.post_message(
+        channel="#deployments",
+        text=f"Approval needed: {effect.tool}",
+        blocks=[...],
+    )
+
 
 result = await ledger.run(
     ToolCall(
@@ -123,20 +131,34 @@ result = await ledger.run(
     ),
     handler=deploy_to_k8s,
     run_options=RunOptions(requires_approval=True),
-    hooks=LedgerHooks(on_approval_required=notify_slack),
+    hooks=LedgerHooks(on_approval_required=notify_slack_approval_hook),
 )
 
-# Approve from anywhere (admin panel, Slack bot, CLI):
-await ledger.approve(effect.idem_key)
-# or
-await ledger.deny(effect.idem_key, reason="Not authorized")
+# Slack bot side: handle button click
+@slack_app.action("approve")
+async def handle_approve(ack, body):
+    await ack()
+    idem_key = body["actions"][0]["value"]  # From button payload
+
+    await ledger.approve(idem_key)
+    await slack.post_message(channel="#deployments", text=f"✅ Approved: {idem_key}")
+
+@slack_app.action("deny")
+async def handle_deny(ack, body):
+    await ack()
+    idem_key = body["actions"][0]["value"]
+
+    await ledger.deny(idem_key, reason="Denied by operator")
+    await slack.post_message(channel="#deployments", text=f"❌ Denied: {idem_key}")
 ```
 
 The agent waits. The human decides. The ledger records everything.
 
-`run()` polls until the effect is approved (with exponential backoff, default 30s timeout). After approval, the handler executes and the result is returned.
+`run()` polls until the effect is approved, with exponential backoff (default: 30s timeout, 50ms initial interval, 1.5x backoff multiplier). Configurable via `RunOptions.concurrency` (see [Configuration](#configuration)). After approval, the handler executes and the result is returned.
 
 The `on_approval_required` hook fires once when the approval request is created—not on retries or replays. Hook errors are logged but don't abort the run.
+
+**Key flow**: The hook receives `effect.idem_key`—this is the approval handle. External systems (Slack, admin panels, CLIs) store this key in button payloads/URLs and pass it to `approve(idem_key)` or `deny(idem_key, reason)`.
 
 > **Intent-bound approval**: The approval is tied to the exact payload hash. If the agent retries with different arguments, that's a *new* approval request—not a bypass of the previous one.
 
@@ -155,9 +177,12 @@ async def send_email(to: str, subject: str, body: str) -> str:
 
 async def execute_tool_safely(tool_name: str, args: dict, workflow_id: str):
     """Wrap any async function with idempotency."""
+    async def handler(_):
+        return await send_email(**args)
+
     return await ledger.run(
         ToolCall(workflow_id=workflow_id, tool=tool_name, args=args),
-        handler=lambda _: send_email(**args),
+        handler=handler,
     )
 
 # In your agent's tool execution loop:
@@ -209,9 +234,10 @@ processing → succeeded
 
 ### Design Constraints
 
-- **Exactly-once recording**: Each unique `(workflow_id, tool, args)` tuple is recorded exactly once
+- **At-most-once commit per idem_key**: Each unique `(workflow_id, tool, args)` tuple is recorded at most once, enforced by the store's unique constraint on `idem_key` and atomic upsert semantics
 - **Downstream exactly-once**: Depends on your handler being idempotent or the downstream API supporting idempotency keys
 - **Deterministic canonicalization**: Args are JSON-serialized with sorted keys; non-deterministic values (timestamps, UUIDs) in args will create new records
+- **Multi-tenant isolation**: Include tenant/user/principal in `workflow_id` (or in `args`) to prevent cross-actor deduplication. The library does not enforce tenant boundaries—your application must scope `workflow_id` appropriately
 
 ---
 
@@ -314,7 +340,9 @@ No. Temporal is a full workflow orchestration engine. `agent-ledger` is a lightw
 Yes—by replaying the recorded result instead of re-executing the handler. For extra safety, also pass Stripe's own `idempotency_key` in your API call.
 
 **What is `workflow_id`?**
-A scope boundary for idempotency. Same `(workflow_id, tool, args)` = same effect. Different workflow_id = independent effects, even with identical tool+args.
+A scope boundary for idempotency. Same `(workflow_id, tool, args)` = same effect. Different workflow_id = independent effects, even with identical tool+args. You can use this, for example, if an agent is invoked via a webhook to deduplicate all side effects across multiple retries by passing the webhook's `id` as the `workflow_id`.
+
+**Important**: In multi-tenant systems, include the tenant/user identifier in `workflow_id` (e.g., `"tenant-123:order-456"`) to prevent unintended deduplication across different actors or security boundaries.
 
 ---
 
@@ -331,20 +359,47 @@ See [ledger.py](agent_ledger/ledger.py) for full API with type signatures.
 
 ### Configuration
 
+Control polling, timeouts, and stale effect handling:
+
 ```python
 from agent_ledger import RunOptions, ConcurrencyOptions, StaleOptions
 
-RunOptions(
-    requires_approval=False,
-    concurrency=ConcurrencyOptions(
-        wait_timeout_ms=30_000,
-        backoff_multiplier=1.5,
+# Per-call configuration
+await ledger.run(
+    call,
+    handler=my_handler,
+    run_options=RunOptions(
+        requires_approval=False,
+        concurrency=ConcurrencyOptions(
+            wait_timeout_ms=30_000,      # Max wait time for in-flight effects (default: 30s)
+            initial_interval_ms=50,      # First poll interval (default: 50ms)
+            max_interval_ms=1_000,       # Cap for backoff interval (default: 1s)
+            backoff_multiplier=1.5,      # Exponential backoff rate (default: 1.5x)
+            jitter_factor=0.3,           # Random jitter to avoid thundering herd (default: 0.3)
+        ),
+        stale=StaleOptions(
+            after_ms=60_000,             # Take over stale PROCESSING effects (default: 0 = disabled)
+        ),
     ),
-    stale=StaleOptions(
-        after_ms=60_000,  # Take over effects older than this
+)
+
+# Global defaults (applied to all run() calls unless overridden)
+from agent_ledger import EffectLedger, EffectLedgerOptions, LedgerDefaults
+
+ledger = EffectLedger(
+    EffectLedgerOptions(
+        store=store,
+        defaults=LedgerDefaults(
+            run=RunOptions(
+                requires_approval=True,  # All calls need approval by default
+                concurrency=ConcurrencyOptions(wait_timeout_ms=60_000),  # 60s timeout
+            ),
+        ),
     ),
 )
 ```
+
+**Polling behavior**: When waiting for an in-flight or approval-required effect, `run()` polls the store with exponential backoff. Initial interval is 50ms, increasing by 1.5x each retry (up to 1s max), with 30% jitter. Times out after 30s by default.
 
 ---
 
