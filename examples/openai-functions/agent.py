@@ -32,7 +32,6 @@ from agent_ledger import (
 
 # --- Setup ---
 
-client = AsyncOpenAI()
 store = MemoryStore()
 ledger = EffectLedger(EffectLedgerOptions(store=store))
 
@@ -157,7 +156,7 @@ async def execute_tool(name: str, args: dict) -> str:
 # --- Agent loop ---
 
 
-async def run_agent(user_message: str) -> str:
+async def run_agent(user_message: str, client: AsyncOpenAI) -> str:
     messages: list[ChatCompletionMessageParam] = [
         {"role": "user", "content": user_message}
     ]
@@ -200,6 +199,7 @@ async def main():
     if not os.environ.get("OPENAI_API_KEY"):
         print("Set OPENAI_API_KEY environment variable")
         return
+    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     query = """
     Process order #42 for alice@example.com:
@@ -218,7 +218,7 @@ async def main():
     print("AGENT EXECUTION")
     print("=" * 60)
 
-    response = await run_agent(query)
+    response = await run_agent(query, client)
 
     print()
     print("=" * 60)

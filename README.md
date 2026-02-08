@@ -31,6 +31,7 @@ Safe retries, crash recovery, and multi-worker coordination.
 <a href="https://github.com/rune0-dev/agent-ledger/actions/workflows/ci.yml"><img src="https://github.com/rune0-dev/agent-ledger/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
 <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
+<a href="https://discord.gg/snP6PYvgn2"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
 </div>
@@ -404,7 +405,7 @@ except Exception as e:
 No. Temporal is a full workflow orchestration engine. `agent-ledger` is a lightweight idempotency layer you can use inside Temporal activities, or standalone.
 
 **Can it prevent double Stripe charges/email sends/any other agent action?**
-Yes—by replaying the recorded result instead of re-executing the handler. For extra safety, also pass Stripe's own `idempotency_key` in your API call.
+It is designed to prevent duplicates for identical calls by replaying the recorded result instead of re-executing the handler. For critical side effects, also pass the downstream provider's idempotency key (for example, Stripe's `idempotency_key`).
 
 **What is `workflow_id`?**
 A scope boundary for idempotency. Same `(workflow_id, tool, args)` = same effect. Different workflow_id = independent effects, even with identical tool+args. You can use this, for example, if an agent is invoked via a webhook to deduplicate all side effects across multiple retries by passing the webhook's `id` as the `workflow_id`.

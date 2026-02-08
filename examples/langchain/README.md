@@ -2,6 +2,8 @@
 
 Idempotent tool execution for LangChain agents.
 
+Note: tool side effects in this example are mocked (`print` + fake IDs). Replace them with your real API calls.
+
 ## The Problem
 
 When LangChain agents retry (due to timeouts, crashes, or LLM non-determinism), tools execute multiple times:
@@ -50,7 +52,7 @@ The example creates a LangGraph ReAct agent with three tools:
 - `send_email` - Send an email
 - `create_ticket` - Create a support ticket
 
-Each tool wraps its side effect with `ledger.run()`. The LLM decides which tools to call, and agent-ledger ensures each unique call executes exactly once.
+Each tool wraps its side effect with `ledger.run()`. The LLM decides which tools to call, and agent-ledger deduplicates repeated calls by replaying the recorded result.
 
 ## Production Notes
 

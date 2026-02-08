@@ -13,8 +13,8 @@ Thank you for your interest in contributing to agent-ledger!
 
 ```bash
 # Clone the repository
-git clone https://github.com/rune0/agent-ledger-py.git
-cd agent-ledger-py
+git clone https://github.com/rune0-dev/agent-ledger.git
+cd agent-ledger
 
 # Create virtual environment and install dependencies
 python -m venv .venv

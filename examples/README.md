@@ -2,6 +2,8 @@
 
 Integration examples for `agent-ledger` with various agent frameworks.
 
+These are integration-pattern examples: frameworks and agent loops are real, while side-effect implementations are mocked for safety.
+
 Each example is self-contained with its own `requirements.txt`.
 
 ## Available Examples
