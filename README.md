@@ -34,6 +34,10 @@ Safe retries, crash recovery, and multi-worker coordination.
 <a href="https://discord.gg/snP6PYvgn2"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
+<p>
+<a href="https://github.com/rune0-dev/agent-ledger-demo"><b>Try Interactive Demo</b></a> • <a href="#installation"><b>Install Library</b></a>
+</p>
+
 </div>
 
 
@@ -42,21 +46,62 @@ Safe retries, crash recovery, and multi-worker coordination.
 
 <div align="center">
 
-<pre>
-POST /agent/run  ×5 retries
-{"tool": "stripe.charge", "amount": 50}
-</pre>
+<p>
+<b>Interactive demo:</b> approval gate → execute once → replay safely → inspect receipts via <code>/effects</code>
+</p>
 
-<img src="assets/side-by-side.gif" alt="agent-ledger demo: without vs with idempotency" width="700">
+<img src="assets/agent-demo.gif" alt="agent-ledger interactive demo showing approval, dedup replay, and effect receipts" width="540">
 
-<table>
-<tr>
-<td align="center"><b>With agent-ledger</b><br><code>CHARGES_CREATED: 1</code></td>
-<td align="center"><b>Without agent-ledger</b><br><code>CHARGES_CREATED: 5</code></td>
-</tr>
-</table>
+<p>
+<a href="https://github.com/rune0-dev/agent-ledger-demo"><b>Run this demo in ~2 minutes →</b></a>
+</p>
 
 </div>
+
+---
+
+## Table of Contents
+
+- [Interactive Demo (2 Minutes)](#interactive-demo-2-minutes)
+- [Why This Exists](#why-this-exists)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [The "Pause Button" for Your Agent (Human-in-the-loop)](#the-pause-button-for-your-agent-human-in-the-loop)
+- [With LangChain](#with-langchain)
+- [How It Works](#how-it-works)
+- [More Examples](#more-examples)
+- [When to Use This](#when-to-use-this)
+- [Why Not...?](#why-not)
+- [FAQ](#faq)
+- [Core API](#core-api)
+- [License](#license)
+
+---
+
+## Interactive Demo (2 Minutes)
+
+If you want to feel the behavior before integrating, run the official interactive demo:
+
+```bash
+git clone https://github.com/rune0-dev/agent-ledger-demo
+cd agent-ledger-demo
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+
+export OPENAI_API_KEY='sk-...'
+agent
+```
+
+Try this sequence:
+
+- `charge customer Acme 100k usd` (approval requested + effect created)
+- Approve with `y` when prompted
+- Repeat the exact same request (dedup replay, no duplicate charge)
+- `/effects` (inspect recorded effects and dedup count)
+
+See the full demo source in [`agent-ledger-demo`](https://github.com/rune0-dev/agent-ledger-demo).
 
 ---
 
