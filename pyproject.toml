@@ -1,6 +1,6 @@
 [project]
 name = "agent-ledger"
-version = "0.2.0"
+version = "0.2.1"
 description = "Idempotency and audit ledger for AI agent tool calls"
 readme = "README.md"
 license = "Apache-2.0"
@@ -59,10 +59,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rune0/agent-ledger-py"
-Documentation = "https://github.com/rune0/agent-ledger-py#readme"
-Repository = "https://github.com/rune0/agent-ledger-py"
-Issues = "https://github.com/rune0/agent-ledger-py/issues"
+Homepage = "https://github.com/rune0-dev/agent-ledger"
+Documentation = "https://github.com/rune0-dev/agent-ledger#readme"
+Repository = "https://github.com/rune0-dev/agent-ledger"
+Issues = "https://github.com/rune0-dev/agent-ledger/issues"
 
 [build-system]
 requires = ["hatchling"]

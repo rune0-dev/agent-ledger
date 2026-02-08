@@ -10,11 +10,9 @@ Usage:
 """
 
 import asyncio
+import inspect
 import os
 from functools import wraps
-
-from crewai import Agent, Crew, Process, Task
-from crewai.tools import tool
 
 from agent_ledger import (
     EffectLedger,
@@ -52,16 +50,23 @@ def idempotent(
     def decorator(func):
         @wraps(func)  # Preserves function signature for CrewAI schema generation
         def wrapper(*args, **kwargs):
+            # Normalize positional/keyword args to a stable dict for idempotency hashing.
+            bound = inspect.signature(func).bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            call_args = dict(bound.arguments)
+
             async def _run():
                 async def _handler(effect):
-                    result = func(*args, **kwargs)
+                    result = func(**call_args)
+                    if inspect.isawaitable(result):
+                        return await result
                     return result
 
                 return await ledger.run(
                     ToolCall(
                         workflow_id=WORKFLOW_ID,
                         tool=tool_name,
-                        args=kwargs,
+                        args=call_args,
                         idempotency_keys=idempotency_keys,
                     ),
                     handler=_handler,
@@ -87,7 +92,6 @@ charge_hooks = LedgerHooks(
 )
 
 
-@tool("Charge Customer")
 @idempotent("stripe.charge", hooks=charge_hooks)
 def charge_customer(amount_cents: int, currency: str = "usd") -> str:
     """
@@ -99,7 +103,6 @@ def charge_customer(amount_cents: int, currency: str = "usd") -> str:
 
 
 # ADVANCED: Only use recipient + subject for idempotency (ignore body changes)
-@tool("Send Email")
 @idempotent("email.send", idempotency_keys=["to", "subject"])
 def send_email(to: str, subject: str, body: str) -> str:
     """Send an email to a recipient."""
@@ -107,7 +110,6 @@ def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to}. Message ID: msg_xxx"
 
 
-@tool("Create Ticket")
 @idempotent("tickets.create")
 def create_ticket(title: str, description: str) -> str:
     """Create a support ticket."""
@@ -119,11 +121,18 @@ def create_ticket(title: str, description: str) -> str:
 
 
 def create_crew():
+    from crewai import Agent, Crew, Process, Task
+    from crewai.tools import tool
+
+    charge_customer_tool = tool("Charge Customer")(charge_customer)
+    send_email_tool = tool("Send Email")(send_email)
+    create_ticket_tool = tool("Create Ticket")(create_ticket)
+
     order_agent = Agent(
         role="Order Processor",
         goal="Process customer orders by charging, sending confirmation, and creating tickets",
         backstory="You are an efficient order processor who handles e-commerce transactions.",
-        tools=[charge_customer, send_email, create_ticket],
+        tools=[charge_customer_tool, send_email_tool, create_ticket_tool],
         verbose=True,
     )
 

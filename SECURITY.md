@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
@@ -61,4 +61,4 @@ When stale detection is enabled (`stale.after_ms > 0`), there is a theoretical w
 
 **Mitigation**: Set `stale.after_ms` significantly higher than your longest expected handler duration, or keep stale detection disabled for handlers with critical side effects.
 
-See [PRODUCTION_READINESS_GAPS.md](PRODUCTION_READINESS_GAPS.md) for detailed analysis.
+This stale-takeover behavior is an intentional design trade-off and should be considered when choosing `stale.after_ms` values.

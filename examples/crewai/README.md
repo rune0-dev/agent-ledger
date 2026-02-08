@@ -2,6 +2,8 @@
 
 Idempotent tool execution for CrewAI agents.
 
+Note: tool side effects in this example are mocked (`print` + fake IDs). Replace them with your real API calls.
+
 ## Setup
 
 ```bash
@@ -28,4 +30,4 @@ def charge_customer(amount_cents: int) -> str:
     return stripe.charge(amount_cents)
 ```
 
-Each unique `(workflow_id, tool, args)` executes exactly once.
+Repeated calls with the same `(workflow_id, tool, args)` are deduplicated and return the recorded result.

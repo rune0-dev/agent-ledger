@@ -2,6 +2,8 @@
 
 The simplest integration - no framework, just OpenAI SDK with idempotent tools.
 
+Note: tool side effects in this example are mocked (`print` + fake IDs). Replace them with your real API calls.
+
 ## Setup
 
 ```bash
@@ -29,4 +31,4 @@ async def execute_tool(name: str, args: dict) -> str:
     return json.dumps(result)
 ```
 
-This ensures each unique `(workflow_id, tool, args)` executes exactly once.
+This deduplicates repeated calls with the same `(workflow_id, tool, args)` and replays the recorded result.

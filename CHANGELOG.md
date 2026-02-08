@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-08
+
+### Changed
+
+- Synced runtime `agent_ledger.__version__` with package version `0.2.1`
+- Updated project URLs to the canonical repository (`rune0-dev/agent-ledger`)
+- Updated `CONTRIBUTING.md` clone instructions for the current repository path
+- Updated security policy supported versions and removed a broken documentation reference
+- Corrected default local Postgres test URL from `0.0.0.0` to `127.0.0.1`
+
 ## [0.1.0] - 2026-01-13
 
 ### Added
@@ -44,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial project structure
 - Basic types and store protocol
 
-[Unreleased]: https://github.com/rune0/agent-ledger-py/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/rune0/agent-ledger-py/compare/v0.0.1...v0.1.0
-[0.0.1]: https://github.com/rune0/agent-ledger-py/releases/tag/v0.0.1
+[Unreleased]: https://github.com/rune0-dev/agent-ledger/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/rune0-dev/agent-ledger/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/rune0-dev/agent-ledger/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/rune0-dev/agent-ledger/compare/v0.0.1...v0.1.0
+[0.0.1]: https://github.com/rune0-dev/agent-ledger/releases/tag/v0.0.1

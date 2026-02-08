@@ -2,6 +2,8 @@
 
 Idempotent tool execution for the official OpenAI Agents SDK.
 
+Note: tool side effects in this example are mocked (`print` + fake IDs). Replace them with your real API calls.
+
 ## Setup
 
 ```bash
@@ -30,4 +32,4 @@ async def charge_customer(amount: Annotated[int, "Amount in cents"]) -> str:
     return f"Charged. ID: {result['charge_id']}"
 ```
 
-Each unique `(workflow_id, tool, args)` executes exactly once.
+Repeated calls with the same `(workflow_id, tool, args)` are deduplicated and return the recorded result.
